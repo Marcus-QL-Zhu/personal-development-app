@@ -1,0 +1,9 @@
+{
+  "name": "GameVoice Local",
+  "short_name": "GameVoice",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#274C77",
+  "description": "GameVoice local browser test shell"
+}

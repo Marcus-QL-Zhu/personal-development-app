@@ -1,0 +1,2 @@
+export 'duplex_audio_session_io.dart'
+    if (dart.library.html) 'duplex_audio_session_web.dart';

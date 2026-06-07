@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gamevoice-server"
+version = "0.1.0"
+description = "Arkham Horror LCG table companion backend"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.136.0",
+  "python-multipart>=0.0.9",
+  "pdfplumber==0.11.9",
+  "uvicorn>=0.44.0",
+  "webrtcvad-wheels>=2.0.14",
+  "websockets>=15.0.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

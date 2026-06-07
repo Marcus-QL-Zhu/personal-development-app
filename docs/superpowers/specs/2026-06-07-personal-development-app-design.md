@@ -213,6 +213,8 @@ Form behavior:
 - The profile note and Gallup fields must have explicit max lengths.
 - Long text fields must have fixed heights, internal vertical scrolling, and visible scroll affordance where the platform supports it, so long content does not stretch the page uncontrollably.
 - A bottom `确认保存` button saves the profile.
+- After successful save, the app must automatically navigate to that consultant's edit profile screen.
+- The edit profile screen must show the consultant's Feishu Bitable link in a read-only field with a copy button on the right, so the manager can send the link to the consultant.
 - After successful save, the new consultant must appear in both `编辑履历` and `coach历史`.
 
 ### 编辑履历
@@ -224,6 +226,7 @@ Behavior:
 - Name, profile note, and Gallup can be changed.
 - The same required-name validation and long-text constraints apply.
 - A bottom `确认保存` button saves changes to the backend.
+- The edit profile screen shows the consultant's Feishu Bitable link when the backend has returned one. The link is read-only and has a right-side copy action.
 - After successful save, the updated consultant name/details must be reflected in consultant lists and future coaching generation context.
 
 ### coach历史

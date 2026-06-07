@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'development_repository.dart';
 
@@ -22,15 +23,17 @@ class _DevelopmentProfileFormScreenState
   final _nameController = TextEditingController();
   final _profileController = TextEditingController();
   final _gallupController = TextEditingController();
+  DevelopmentEmployee? _employee;
   bool _saving = false;
   String? _error;
 
-  bool get _isEdit => widget.employee != null;
+  bool get _isEdit => _employee != null;
 
   @override
   void initState() {
     super.initState();
     final employee = widget.employee;
+    _employee = employee;
     if (employee != null) {
       _nameController.text = employee.name;
       _profileController.text = employee.profileNote;
@@ -49,20 +52,35 @@ class _DevelopmentProfileFormScreenState
       _error = null;
     });
     try {
-      final employee = widget.employee;
+      final employee = _employee;
       if (employee == null) {
-        await widget.repository.createEmployee(
+        final created = await widget.repository.createEmployee(
           name: name,
           gallupRaw: _gallupController.text,
           profileNote: _profileController.text,
         );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已保存')),
+        );
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => DevelopmentProfileFormScreen(
+              repository: widget.repository,
+              employee: created,
+            ),
+          ),
+        );
+        return;
       } else {
-        await widget.repository.updateEmployee(
+        final updated = await widget.repository.updateEmployee(
           employeeId: employee.id,
           name: name,
           gallupRaw: _gallupController.text,
           profileNote: _profileController.text,
         );
+        if (mounted) setState(() => _employee = updated);
       }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -127,6 +145,10 @@ class _DevelopmentProfileFormScreenState
                     maxLength: 3000,
                     height: 190,
                   ),
+                  if (_isEdit) ...[
+                    const SizedBox(height: 12),
+                    _FeishuLinkField(url: _employee?.feishuUrl ?? ''),
+                  ],
                 ],
               ),
             ),
@@ -148,6 +170,39 @@ class _DevelopmentProfileFormScreenState
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FeishuLinkField extends StatelessWidget {
+  const _FeishuLinkField({required this.url});
+
+  final String url;
+
+  Future<void> _copy(BuildContext context) async {
+    if (url.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('飞书多维表格链接已复制')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasUrl = url.isNotEmpty;
+    return TextFormField(
+      readOnly: true,
+      initialValue: hasUrl ? url : '暂无飞书多维表格链接',
+      decoration: InputDecoration(
+        labelText: '飞书多维表格链接',
+        border: const OutlineInputBorder(),
+        suffixIcon: IconButton(
+          tooltip: '复制飞书多维表格链接',
+          icon: const Icon(Icons.copy),
+          onPressed: hasUrl ? () => _copy(context) : null,
         ),
       ),
     );

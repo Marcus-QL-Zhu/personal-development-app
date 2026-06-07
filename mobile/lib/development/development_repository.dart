@@ -21,10 +21,12 @@ class DevelopmentEmployee {
     required this.gallupRaw,
     required this.profileNote,
     this.gallupStrengths = const [],
+    this.feishuUrl = '',
   });
 
   factory DevelopmentEmployee.fromJson(Map<String, dynamic> json) {
     final strengths = json['gallup_strengths'] as List<dynamic>? ?? const [];
+    final feishu = json['feishu'] as Map<String, dynamic>? ?? const {};
     return DevelopmentEmployee(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '',
@@ -34,6 +36,7 @@ class DevelopmentEmployee {
           .whereType<Map<String, dynamic>>()
           .map(GallupStrength.fromJson)
           .toList(),
+      feishuUrl: feishu['url'] as String? ?? '',
     );
   }
 
@@ -42,12 +45,14 @@ class DevelopmentEmployee {
   final String gallupRaw;
   final String profileNote;
   final List<GallupStrength> gallupStrengths;
+  final String feishuUrl;
 
   DevelopmentEmployee copyWith({
     String? name,
     String? gallupRaw,
     String? profileNote,
     List<GallupStrength>? gallupStrengths,
+    String? feishuUrl,
   }) {
     return DevelopmentEmployee(
       id: id,
@@ -55,6 +60,7 @@ class DevelopmentEmployee {
       gallupRaw: gallupRaw ?? this.gallupRaw,
       profileNote: profileNote ?? this.profileNote,
       gallupStrengths: gallupStrengths ?? this.gallupStrengths,
+      feishuUrl: feishuUrl ?? this.feishuUrl,
     );
   }
 }

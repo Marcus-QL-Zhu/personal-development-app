@@ -9,6 +9,7 @@ class DemoDevelopmentRepository implements DevelopmentRepository {
         name: 'Demo Employee',
         gallupRaw: '1 Learner\n2 Strategic\n3 Achiever',
         profileNote: 'Demo profile for local browser testing.',
+        feishuUrl: 'https://your-tenant.feishu.cn/base/demo-employee',
         gallupStrengths: [
           GallupStrength(rank: 1, name: 'Learner'),
           GallupStrength(rank: 2, name: 'Strategic'),
@@ -25,7 +26,8 @@ class DemoDevelopmentRepository implements DevelopmentRepository {
   Future<bool> healthCheck() async => true;
 
   @override
-  Future<List<DevelopmentEmployee>> listEmployees() async => List.unmodifiable(_employees);
+  Future<List<DevelopmentEmployee>> listEmployees() async =>
+      List.unmodifiable(_employees);
 
   @override
   Future<DevelopmentEmployee> createEmployee({
@@ -38,6 +40,7 @@ class DemoDevelopmentRepository implements DevelopmentRepository {
       name: name,
       gallupRaw: gallupRaw,
       profileNote: profileNote,
+      feishuUrl: 'https://your-tenant.feishu.cn/base/${_employees.length + 1}',
       gallupStrengths: _parseDemoGallup(gallupRaw),
     );
     _employees.insert(0, employee);
@@ -57,6 +60,9 @@ class DemoDevelopmentRepository implements DevelopmentRepository {
       name: name,
       gallupRaw: gallupRaw,
       profileNote: profileNote,
+      feishuUrl: index >= 0
+          ? _employees[index].feishuUrl
+          : 'https://your-tenant.feishu.cn/base/$employeeId',
       gallupStrengths: _parseDemoGallup(gallupRaw),
     );
     if (index >= 0) {
@@ -99,7 +105,8 @@ class DemoDevelopmentRepository implements DevelopmentRepository {
 List<GallupStrength> _parseDemoGallup(String raw) {
   final strengths = <GallupStrength>[];
   for (final line in raw.split('\n')) {
-    final match = RegExp(r'^\s*(\d{1,2})\s*[\.\)）:：、-]?\s*(.+?)\s*$').firstMatch(line);
+    final match =
+        RegExp(r'^\s*(\d{1,2})\s*[\.\)）:：、-]?\s*(.+?)\s*$').firstMatch(line);
     if (match == null) continue;
     strengths.add(
       GallupStrength(

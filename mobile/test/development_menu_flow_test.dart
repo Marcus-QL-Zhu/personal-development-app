@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_development_app/audio/voice_recorder.dart';
 import 'package:personal_development_app/backend/gamevoice_repository.dart';
@@ -9,7 +10,8 @@ void main() {
   testWidgets('main menu exposes personal development actions', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
-        home: DevelopmentMainMenuScreen(repository: _FakeDevelopmentRepository()),
+        home:
+            DevelopmentMainMenuScreen(repository: _FakeDevelopmentRepository()),
       ),
     );
     await tester.pumpAndSettle();
@@ -23,10 +25,20 @@ void main() {
     expect(find.text('加载历史'), findsNothing);
   });
 
-  testWidgets('creates consultant with name only and shows it in edit and history pickers',
+  testWidgets(
+      'creates consultant then opens editable profile with copyable Feishu link',
       (tester) async {
+    final clipboardCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        clipboardCalls.add(call);
+        return null;
+      },
+    );
     final repository = _FakeDevelopmentRepository();
-    await tester.pumpWidget(MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)));
+    await tester.pumpWidget(
+        MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('新增顾问'));
@@ -38,6 +50,27 @@ void main() {
     expect(repository.employees.single.name, 'Alice');
     expect(repository.employees.single.profileNote, '');
     expect(repository.employees.single.gallupRaw, '');
+    expect(find.widgetWithText(TextField, 'Alice'), findsOneWidget);
+    expect(find.text('https://feishu.example/base/employee-1'), findsOneWidget);
+    final copyButton = find.widgetWithIcon(IconButton, Icons.copy);
+    expect(copyButton, findsOneWidget);
+
+    final button = tester.widget<IconButton>(copyButton);
+    expect(button.onPressed, isNotNull);
+    button.onPressed!();
+    await tester.pumpAndSettle();
+    expect(
+      clipboardCalls.any(
+        (call) =>
+            call.method == 'Clipboard.setData' &&
+            (call.arguments as Map)['text'] ==
+                'https://feishu.example/base/employee-1',
+      ),
+      isTrue,
+    );
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('编辑履历'));
     await tester.pumpAndSettle();
@@ -50,7 +83,8 @@ void main() {
     expect(find.text('Alice'), findsOneWidget);
   });
 
-  testWidgets('edit profile saves changed consultant information', (tester) async {
+  testWidgets('edit profile saves changed consultant information',
+      (tester) async {
     final repository = _FakeDevelopmentRepository()
       ..employees.add(const DevelopmentEmployee(
         id: 'employee-1',
@@ -59,7 +93,8 @@ void main() {
         profileNote: '',
         gallupStrengths: [],
       ));
-    await tester.pumpWidget(MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)));
+    await tester.pumpWidget(
+        MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)));
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('编辑履历'));
@@ -67,7 +102,8 @@ void main() {
     await tester.tap(find.text('Alice'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, '名称'), 'Alice Zhang');
-    await tester.enterText(find.widgetWithText(TextField, '介绍'), 'New profile note');
+    await tester.enterText(
+        find.widgetWithText(TextField, '介绍'), 'New profile note');
     await tester.tap(find.text('确认保存'));
     await tester.pumpAndSettle();
 
@@ -75,7 +111,8 @@ void main() {
     expect(repository.employees.single.profileNote, 'New profile note');
   });
 
-  testWidgets('coach history is sorted newest first and upload is confirmed after recording',
+  testWidgets(
+      'coach history is sorted newest first and upload is confirmed after recording',
       (tester) async {
     final repository = _FakeDevelopmentRepository();
     final employee = const DevelopmentEmployee(
@@ -146,7 +183,8 @@ void main() {
     expect(repository.uploadedClips.single.filename, 'coach.wav');
   });
 
-  testWidgets('coach detail shows summary action plan manager notes and collapsed transcript',
+  testWidgets(
+      'coach detail shows summary action plan manager notes and collapsed transcript',
       (tester) async {
     final repository = _FakeDevelopmentRepository();
     final employee = const DevelopmentEmployee(
@@ -172,7 +210,8 @@ void main() {
       ),
     ];
 
-    await tester.pumpWidget(MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)));
+    await tester.pumpWidget(
+        MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)));
     await tester.pumpAndSettle();
     await tester.tap(find.text('coach历史'));
     await tester.pumpAndSettle();
@@ -233,7 +272,8 @@ class _FakeDevelopmentRepository implements DevelopmentRepository {
   Future<bool> healthCheck() async => true;
 
   @override
-  Future<List<DevelopmentEmployee>> listEmployees() async => List.unmodifiable(employees);
+  Future<List<DevelopmentEmployee>> listEmployees() async =>
+      List.unmodifiable(employees);
 
   @override
   Future<DevelopmentEmployee> createEmployee({
@@ -246,6 +286,7 @@ class _FakeDevelopmentRepository implements DevelopmentRepository {
       name: name,
       gallupRaw: gallupRaw,
       profileNote: profileNote,
+      feishuUrl: 'https://feishu.example/base/employee-${employees.length + 1}',
       gallupStrengths: const [],
     );
     employees.add(employee);
@@ -265,6 +306,7 @@ class _FakeDevelopmentRepository implements DevelopmentRepository {
       name: name,
       gallupRaw: gallupRaw,
       profileNote: profileNote,
+      feishuUrl: employees[index].feishuUrl,
       gallupStrengths: const [],
     );
     employees[index] = updated;

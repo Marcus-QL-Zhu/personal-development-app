@@ -34,6 +34,7 @@ class _DevelopmentCoachHistoryScreenState
   bool _recording = false;
   bool _processing = false;
   String? _error;
+  UploadFilePayload? _failedClip;
 
   @override
   void initState() {
@@ -120,11 +121,24 @@ class _DevelopmentCoachHistoryScreenState
         employeeId: widget.employee.id,
         clip: clip,
       );
-      final next = [session, ..._sessions.where((item) => item.id != session.id)];
+      final next = [
+        session,
+        ..._sessions.where((item) => item.id != session.id)
+      ];
       next.sort((a, b) => _sortKey(b).compareTo(_sortKey(a)));
-      if (mounted) setState(() => _sessions = next);
+      if (mounted) {
+        setState(() {
+          _sessions = next;
+          _failedClip = null;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _failedClip = clip;
+        });
+      }
     } finally {
       if (mounted) setState(() => _processing = false);
     }
@@ -176,9 +190,24 @@ class _DevelopmentCoachHistoryScreenState
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.all(12),
-                child: Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      _error!,
+                      style:
+                          TextStyle(color: Theme.of(context).colorScheme.error),
+                    ),
+                    if (_failedClip != null) ...[
+                      const SizedBox(height: 8),
+                      OutlinedButton.icon(
+                        onPressed:
+                            _processing ? null : () => _upload(_failedClip!),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('重试上传'),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             Expanded(
@@ -200,7 +229,8 @@ class _DevelopmentCoachHistoryScreenState
                                     color: Theme.of(context).dividerColor,
                                   ),
                                 ),
-                                title: Text('${session.coachDate} · ${session.topic}'),
+                                title: Text(
+                                    '${session.coachDate} · ${session.topic}'),
                                 subtitle: Text(
                                   '${session.syncStatus} · ${session.qualityStatus}',
                                 ),
@@ -209,7 +239,8 @@ class _DevelopmentCoachHistoryScreenState
                                   context,
                                   MaterialPageRoute(
                                     builder: (_) =>
-                                        DevelopmentCoachDetailScreen(session: session),
+                                        DevelopmentCoachDetailScreen(
+                                            session: session),
                                   ),
                                 ),
                               ),

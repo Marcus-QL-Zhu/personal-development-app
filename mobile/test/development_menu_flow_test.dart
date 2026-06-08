@@ -183,6 +183,48 @@ void main() {
     expect(repository.uploadedClips.single.filename, 'coach.wav');
   });
 
+  testWidgets('failed upload keeps clip and allows manual retry',
+      (tester) async {
+    final repository = _FakeDevelopmentRepository()..failNextUpload = true;
+    final employee = const DevelopmentEmployee(
+      id: 'employee-1',
+      name: 'Alice',
+      gallupRaw: '',
+      profileNote: '',
+      gallupStrengths: [],
+    );
+    repository.employees.add(employee);
+    final recorder = _FakeVoiceRecorder();
+
+    await tester.pumpWidget(MaterialApp(
+      home: DevelopmentMainMenuScreen(
+        repository: repository,
+        voiceRecorderFactory: () => recorder,
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('coach历史'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Alice'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('开始录音'));
+    await tester.pump();
+    await tester.tap(find.text('结束录音'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('上传'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('重试上传'), findsOneWidget);
+    expect(repository.uploadedClips, isEmpty);
+
+    await tester.tap(find.text('重试上传'));
+    await tester.pumpAndSettle();
+
+    expect(repository.uploadedClips.single.filename, 'coach.wav');
+    expect(find.text('重试上传'), findsNothing);
+  });
+
   testWidgets(
       'coach detail shows summary action plan manager notes and collapsed transcript',
       (tester) async {
@@ -267,6 +309,7 @@ class _FakeDevelopmentRepository implements DevelopmentRepository {
   final employees = <DevelopmentEmployee>[];
   final sessions = <String, List<DevelopmentCoachingSession>>{};
   final uploadedClips = <UploadFilePayload>[];
+  bool failNextUpload = false;
 
   @override
   Future<bool> healthCheck() async => true;
@@ -325,6 +368,10 @@ class _FakeDevelopmentRepository implements DevelopmentRepository {
     required String employeeId,
     required UploadFilePayload clip,
   }) async {
+    if (failNextUpload) {
+      failNextUpload = false;
+      throw Exception('network unavailable');
+    }
     uploadedClips.add(clip);
     final session = DevelopmentCoachingSession(
       id: 'session-${(sessions[employeeId] ?? const []).length + 1}',

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -81,17 +82,24 @@ class RecordVoiceRecorder implements VoiceRecorder {
     LiveAudioCaptureBridge? liveCaptureBridge,
     bool? preferNativeLiveCapture,
     Directory? recordingRoot,
+    Duration? maxClipChunkDuration = const Duration(minutes: 55),
   })  : _backend = backend ?? RecordPluginBackend(),
-        _liveCaptureBridge = liveCaptureBridge ?? PlatformLiveAudioCaptureBridge(),
-        _preferNativeLiveCapture = preferNativeLiveCapture ?? Platform.isAndroid,
-        _recordingRoot = recordingRoot;
+        _liveCaptureBridge =
+            liveCaptureBridge ?? PlatformLiveAudioCaptureBridge(),
+        _preferNativeLiveCapture =
+            preferNativeLiveCapture ?? Platform.isAndroid,
+        _recordingRoot = recordingRoot,
+        _maxClipChunkDuration = maxClipChunkDuration;
 
   final RecorderBackend _backend;
   final LiveAudioCaptureBridge _liveCaptureBridge;
   final bool _preferNativeLiveCapture;
   final Directory? _recordingRoot;
+  final Duration? _maxClipChunkDuration;
   String? _activePath;
   String? _activeRecordingId;
+  final List<String> _activeChunkPaths = [];
+  Timer? _clipRotationTimer;
   bool _streamMode = false;
   bool _usingNativeLiveCapture = false;
 
@@ -143,11 +151,17 @@ class RecordVoiceRecorder implements VoiceRecorder {
     );
     _activePath = path;
     _activeRecordingId = recordingId;
+    _activeChunkPaths
+      ..clear()
+      ..add(path);
+    _scheduleClipRotation();
   }
 
   @override
   Future<UploadFilePayload?> stop() async {
     final path = await _backend.stop();
+    _clipRotationTimer?.cancel();
+    _clipRotationTimer = null;
     _streamMode = false;
     _usingNativeLiveCapture = false;
     final resolvedPath = path ?? _activePath;
@@ -165,17 +179,50 @@ class RecordVoiceRecorder implements VoiceRecorder {
 
     final bytes = await file.readAsBytes();
     return UploadFilePayload(
-      filename: file.uri.pathSegments.isEmpty ? 'voice-clip.wav' : file.uri.pathSegments.last,
+      filename: file.uri.pathSegments.isEmpty
+          ? 'voice-clip.wav'
+          : file.uri.pathSegments.last,
       bytes: bytes,
       localPath: file.path,
       recordingId: recordingId,
-      chunkPaths: [file.path],
+      chunkPaths: List.unmodifiable(_activeChunkPaths),
     );
+  }
+
+  void _scheduleClipRotation() {
+    final duration = _maxClipChunkDuration;
+    if (duration == null) return;
+    _clipRotationTimer?.cancel();
+    _clipRotationTimer = Timer(duration, () {
+      _rotateClipChunk().catchError((Object error) {
+        debugPrint('[RECORDER] clip rotation failed: $error');
+        MobileDiagnostics.record(
+          component: 'recorder',
+          event: 'clip_rotation_failed',
+          details: {'error': error.toString()},
+        );
+      });
+    });
+  }
+
+  Future<void> _rotateClipChunk() async {
+    final recordingId = _activeRecordingId;
+    final root = _recordingRoot ?? await _defaultRecordingRoot();
+    if (recordingId == null || _activePath == null) return;
+    await _backend.stop();
+    final nextIndex = _activeChunkPaths.length + 1;
+    final nextPath =
+        '${root.path}${Platform.pathSeparator}coach-$recordingId-$nextIndex.m4a';
+    await _backend.start(_buildClipConfig(), path: nextPath);
+    _activePath = nextPath;
+    _activeChunkPaths.add(nextPath);
+    _scheduleClipRotation();
   }
 
   Future<Directory> _defaultRecordingRoot() async {
     final docs = await getApplicationDocumentsDirectory();
-    return Directory('${docs.path}${Platform.pathSeparator}pending_coach_recordings');
+    return Directory(
+        '${docs.path}${Platform.pathSeparator}pending_coach_recordings');
   }
 
   @override
@@ -184,12 +231,14 @@ class RecordVoiceRecorder implements VoiceRecorder {
     if (_preferNativeLiveCapture && _liveCaptureBridge.isSupported) {
       _usingNativeLiveCapture = true;
       debugPrint('[LIVE][recorder] using native live capture');
-      MobileDiagnostics.record(component: 'recorder', event: 'using_native_live_capture');
+      MobileDiagnostics.record(
+          component: 'recorder', event: 'using_native_live_capture');
       return _liveCaptureBridge.startLiveCapture();
     }
     _usingNativeLiveCapture = false;
     debugPrint('[LIVE][recorder] using record plugin live stream');
-    MobileDiagnostics.record(component: 'recorder', event: 'using_record_plugin_live_stream');
+    MobileDiagnostics.record(
+        component: 'recorder', event: 'using_record_plugin_live_stream');
     return _backend.startStream(_buildLiveConfig());
   }
 

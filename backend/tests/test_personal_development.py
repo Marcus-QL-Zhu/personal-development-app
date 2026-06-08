@@ -262,6 +262,19 @@ def test_create_coaching_session_from_mobile_transcript(monkeypatch):
     assert session["sync_status"] == "synced"
     assert session["feishu_record_id"] == "rec-transcript"
 
+    duplicate = client.post(
+        f"/development/employees/{employee['id']}/coaching-sessions/from-transcript",
+        json={
+            "recording_id": "local-recording-1",
+            "audio_filename": "coach.m4a",
+            "transcript_text": "manager: clear next step",
+            "segments": [],
+            "asr_provider": "tencent_flash_asr_mobile",
+            "quality_status": "ok",
+        },
+    ).json()
+    assert duplicate["id"] == session["id"]
+
 
 def test_feishu_appender_writes_only_public_coaching_fields():
     from gamevoice_server.personal_development import FeishuPersonalDevelopmentBitable

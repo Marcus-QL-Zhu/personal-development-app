@@ -776,6 +776,10 @@ class PersonalDevelopmentService:
         employee = self.store.get_employee(employee_id)
         if employee is None:
             raise KeyError(employee_id)
+        if recording_id:
+            for existing in self.store.list_sessions(employee_id):
+                if str(existing.get("recording_id") or "") == recording_id:
+                    return existing
 
         now = datetime.now(timezone.utc)
         session_id = str(uuid4())

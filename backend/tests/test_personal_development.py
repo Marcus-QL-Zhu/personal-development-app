@@ -171,6 +171,98 @@ def test_upload_coaching_audio_processes_and_appends_public_feishu_record(monkey
     assert history["sessions"][0]["id"] == session["id"]
 
 
+def test_flash_asr_signing_endpoint_returns_short_lived_url(monkeypatch):
+    import gamevoice_server.main as main_module
+    from gamevoice_server.personal_development import (
+        InMemoryPersonalDevelopmentStore,
+        PersonalDevelopmentService,
+        TencentFlashFileAsr,
+    )
+
+    service = PersonalDevelopmentService(
+        store=InMemoryPersonalDevelopmentStore(),
+        asr=TencentFlashFileAsr(
+            app_id="123456",
+            secret_id="sid",
+            secret_key="skey",
+            timestamp_provider=lambda: 1770000000,
+            nonce_provider=lambda: 42,
+        ),
+    )
+    monkeypatch.setattr(main_module, "personal_development_service", service)
+
+    response = TestClient(main_module.app).post(
+        "/development/asr/flash-signatures",
+        json={"filename": "coach.m4a", "content_length": 12345},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["method"] == "POST"
+    assert payload["url"].startswith("https://asr.cloud.tencent.com/asr/flash/v1/123456?")
+    assert "voice_format=m4a" in payload["url"]
+    assert "engine_type=16k_zh" in payload["url"]
+    assert payload["headers"]["Authorization"]
+    assert payload["headers"]["Content-Type"] == "application/octet-stream"
+    assert payload["expires_at"] == 1770003600
+    assert payload["max_body_bytes"] == 100 * 1024 * 1024
+
+
+def test_create_coaching_session_from_mobile_transcript(monkeypatch):
+    import gamevoice_server.main as main_module
+    from gamevoice_server.personal_development import (
+        InMemoryPersonalDevelopmentStore,
+        PersonalDevelopmentService,
+    )
+
+    class FakeFeishu:
+        def create_employee_table(self, employee_name: str) -> dict:
+            return {"app_token": "base-token", "table_id": "table-id", "url": ""}
+
+        def append_coaching_record(self, employee: dict, session: dict) -> str:
+            return "rec-transcript"
+
+    class FakeGenerator:
+        def generate(self, *, employee: dict, transcript: dict) -> dict:
+            assert transcript["text"] == "manager: clear next step"
+            assert transcript["provider"] == "tencent_flash_asr_mobile"
+            return {
+                "topic": "Pipeline review",
+                "content_summary": "Covered qualification criteria and next action.",
+                "action_plan": "Send written recap after the call.",
+                "manager_feedback": "Good structure; ask the employee to restate the action.",
+            }
+
+    service = PersonalDevelopmentService(
+        store=InMemoryPersonalDevelopmentStore(),
+        feishu=FakeFeishu(),
+        generator=FakeGenerator(),
+    )
+    monkeypatch.setattr(main_module, "personal_development_service", service)
+    client = TestClient(main_module.app)
+    employee = client.post("/development/employees", json={"name": "Alice"}).json()
+
+    response = client.post(
+        f"/development/employees/{employee['id']}/coaching-sessions/from-transcript",
+        json={
+            "recording_id": "local-recording-1",
+            "audio_filename": "coach.m4a",
+            "transcript_text": "manager: clear next step",
+            "segments": [{"speaker_id": "0", "text": "clear next step"}],
+            "asr_provider": "tencent_flash_asr_mobile",
+            "quality_status": "ok",
+        },
+    )
+
+    assert response.status_code == 200
+    session = response.json()
+    assert session["audio_filename"] == "coach.m4a"
+    assert session["audio_path"] == ""
+    assert session["transcript_text"] == "manager: clear next step"
+    assert session["sync_status"] == "synced"
+    assert session["feishu_record_id"] == "rec-transcript"
+
+
 def test_feishu_appender_writes_only_public_coaching_fields():
     from gamevoice_server.personal_development import FeishuPersonalDevelopmentBitable
 

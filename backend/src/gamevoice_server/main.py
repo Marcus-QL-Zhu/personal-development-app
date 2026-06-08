@@ -3543,6 +3543,21 @@ class DevelopmentEmployeeUpdateRequest(BaseModel):
     profile_note: str = ""
 
 
+class DevelopmentFlashAsrSignatureRequest(BaseModel):
+    filename: str = Field(min_length=1)
+    content_length: int = Field(gt=0)
+
+
+class DevelopmentTranscriptSessionRequest(BaseModel):
+    recording_id: str = ""
+    audio_filename: str = "coach.m4a"
+    transcript_text: str = ""
+    segments: list[dict] = []
+    asr_provider: str = "tencent_flash_asr_mobile"
+    quality_status: str = "ok"
+    asr_error: str = ""
+
+
 @app.post("/development/employees")
 def create_development_employee(payload: DevelopmentEmployeeCreateRequest) -> dict:
     return personal_development_service.create_employee(
@@ -3578,6 +3593,20 @@ def update_development_employee(employee_id: str, payload: DevelopmentEmployeeUp
         raise HTTPException(status_code=404, detail="employee not found") from exc
 
 
+@app.post("/development/asr/flash-signatures")
+def create_development_flash_asr_signature(payload: DevelopmentFlashAsrSignatureRequest) -> dict:
+    asr = personal_development_service.asr
+    if not hasattr(asr, "build_upload_request"):
+        raise HTTPException(status_code=503, detail="Tencent Flash ASR is not configured")
+    try:
+        return asr.build_upload_request(
+            filename=payload.filename,
+            content_length=payload.content_length,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/development/employees/{employee_id}/coaching-sessions")
 async def create_development_coaching_session(employee_id: str, clip: UploadFile = File(...)) -> dict:
     try:
@@ -3585,6 +3614,28 @@ async def create_development_coaching_session(employee_id: str, clip: UploadFile
             employee_id=employee_id,
             filename=clip.filename or "coach.wav",
             audio_bytes=await clip.read(),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="employee not found") from exc
+
+
+@app.post("/development/employees/{employee_id}/coaching-sessions/from-transcript")
+def create_development_coaching_session_from_transcript(
+    employee_id: str,
+    payload: DevelopmentTranscriptSessionRequest,
+) -> dict:
+    try:
+        return personal_development_service.create_coaching_session_from_transcript(
+            employee_id=employee_id,
+            recording_id=payload.recording_id,
+            audio_filename=payload.audio_filename,
+            transcript={
+                "text": payload.transcript_text,
+                "segments": payload.segments,
+                "provider": payload.asr_provider,
+                "quality_status": payload.quality_status,
+                "error": payload.asr_error,
+            },
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="employee not found") from exc

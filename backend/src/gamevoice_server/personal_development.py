@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import hashlib
@@ -381,6 +381,7 @@ class PostCoachAsrPort(Protocol):
 class TencentFlashFileAsr:
     endpoint_host = "asr.cloud.tencent.com"
     default_engine_type = "16k_zh"
+    max_body_bytes = 100 * 1024 * 1024
 
     def __init__(
         self,
@@ -405,23 +406,33 @@ class TencentFlashFileAsr:
         self._timestamp_provider = timestamp_provider or (lambda: int(datetime.now(timezone.utc).timestamp()))
         self._nonce_provider = nonce_provider or (lambda: int(datetime.now(timezone.utc).timestamp() * 1000) % 1000000)
 
+    def build_upload_request(self, *, filename: str, content_length: int) -> dict[str, Any]:
+        if content_length <= 0:
+            raise ValueError("content_length must be positive")
+        if content_length > self.max_body_bytes:
+            raise ValueError("content_length exceeds Tencent Flash ASR 100MB limit")
+        voice_format = Path(filename or "coach.m4a").suffix.lstrip(".").lower() or "m4a"
+        timestamp = int(self._timestamp_provider())
+        expired = timestamp + 3600
+        params = self._build_params(voice_format=voice_format, timestamp=timestamp, expired=expired)
+        path = f"/asr/flash/v1/{self.app_id}"
+        signature = self._signature(path, params)
+        return {
+            "method": "POST",
+            "url": f"https://{self.endpoint_host}{path}?{parse.urlencode(params)}",
+            "headers": {
+                "Authorization": signature,
+                "Content-Type": "application/octet-stream",
+            },
+            "expires_at": expired,
+            "max_body_bytes": self.max_body_bytes,
+        }
+
     def transcribe(self, *, filename: str, audio_bytes: bytes) -> dict[str, Any]:
         voice_format = Path(filename or "coach.wav").suffix.lstrip(".").lower() or "wav"
         timestamp = int(self._timestamp_provider())
         expired = timestamp + 3600
-        params = {
-            "engine_type": self.engine_type,
-            "expired": str(expired),
-            "filter_dirty": "0",
-            "filter_modal": "0",
-            "filter_punc": "0",
-            "nonce": str(self._nonce_provider()),
-            "secretid": self.secret_id,
-            "speaker_diarization": str(self.speaker_diarization),
-            "timestamp": str(timestamp),
-            "voice_format": voice_format,
-            "word_info": "0",
-        }
+        params = self._build_params(voice_format=voice_format, timestamp=timestamp, expired=expired)
         path = f"/asr/flash/v1/{self.app_id}"
         signature = self._signature(path, params)
         url = f"https://{self.endpoint_host}{path}?{parse.urlencode(params)}"
@@ -438,6 +449,21 @@ class TencentFlashFileAsr:
         if int(payload.get("code", 0) or 0) != 0:
             raise RuntimeError(f"Tencent flash ASR error: {payload!r}")
         return self._parse_payload(payload)
+
+    def _build_params(self, *, voice_format: str, timestamp: int, expired: int) -> dict[str, str]:
+        return {
+            "engine_type": self.engine_type,
+            "expired": str(expired),
+            "filter_dirty": "0",
+            "filter_modal": "0",
+            "filter_punc": "0",
+            "nonce": str(self._nonce_provider()),
+            "secretid": self.secret_id,
+            "speaker_diarization": str(self.speaker_diarization),
+            "timestamp": str(timestamp),
+            "voice_format": voice_format,
+            "word_info": "0",
+        }
 
     def _signature(self, path: str, params: dict[str, str]) -> str:
         query = "&".join(f"{key}={params[key]}" for key in sorted(params))
@@ -719,6 +745,71 @@ class PersonalDevelopmentService:
             "topic": str(generated.get("topic") or "待提炼"),
             "content_summary": str(generated.get("content_summary") or ""),
             "action_plan": str(generated.get("action_plan") or "本次未形成明确 Action Plan。"),
+            "manager_feedback": str(generated.get("manager_feedback") or ""),
+            "quality_status": quality_status,
+            "sync_status": "pending",
+            "sync_error": "",
+            "feishu_record_id": "",
+        }
+        session = self.store.create_session(session)
+        try:
+            record_id = self.feishu.append_coaching_record(employee, session) if self.feishu else ""
+            session = self.store.update_session(
+                session_id,
+                {"sync_status": "synced", "feishu_record_id": record_id, "sync_error": ""},
+            )
+        except Exception as exc:  # noqa: BLE001
+            session = self.store.update_session(
+                session_id,
+                {"sync_status": "failed", "sync_error": str(exc), "feishu_record_id": ""},
+            )
+        return session
+
+    def create_coaching_session_from_transcript(
+        self,
+        *,
+        employee_id: str,
+        recording_id: str,
+        audio_filename: str,
+        transcript: dict[str, Any],
+    ) -> dict[str, Any]:
+        employee = self.store.get_employee(employee_id)
+        if employee is None:
+            raise KeyError(employee_id)
+
+        now = datetime.now(timezone.utc)
+        session_id = str(uuid4())
+        generation_error = ""
+        try:
+            generated = self.generator.generate(employee=employee, transcript=transcript) if self.generator else {}
+        except Exception as exc:  # noqa: BLE001
+            generation_error = str(exc)
+            generated = {
+                "topic": "Pending review",
+                "content_summary": "Automatic summary generation failed. Please review the transcript manually.",
+                "action_plan": "No clear action plan was generated.",
+                "manager_feedback": f"Automatic generation failed: {exc}",
+            }
+        quality_status = str(transcript.get("quality_status") or "ok")
+        if generation_error:
+            quality_status = "generation_failed" if quality_status == "ok" else f"{quality_status}+generation_failed"
+        session = {
+            "id": session_id,
+            "employee_id": employee_id,
+            "coach_date": now.date().isoformat(),
+            "created_at": now.isoformat(),
+            "recording_id": recording_id,
+            "audio_filename": audio_filename,
+            "audio_path": "",
+            "audio_expires_at": "",
+            "transcript_text": str(transcript.get("text") or ""),
+            "speaker_segments": list(transcript.get("segments") or []),
+            "asr_provider": str(transcript.get("provider") or ""),
+            "asr_error": str(transcript.get("error") or ""),
+            "generation_error": generation_error,
+            "topic": str(generated.get("topic") or "Pending review"),
+            "content_summary": str(generated.get("content_summary") or ""),
+            "action_plan": str(generated.get("action_plan") or "No clear action plan was generated."),
             "manager_feedback": str(generated.get("manager_feedback") or ""),
             "quality_status": quality_status,
             "sync_status": "pending",

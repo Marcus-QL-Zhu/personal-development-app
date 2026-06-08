@@ -68,7 +68,8 @@ class _FakeLiveAudioCaptureBridge implements LiveAudioCaptureBridge {
 void main() {
   test('clip recording uses persistent 16k mono m4a and keeps file after stop',
       () async {
-    final tempDir = await Directory.systemTemp.createTemp('coach-recorder-test-');
+    final tempDir =
+        await Directory.systemTemp.createTemp('coach-recorder-test-');
     final backend = _FakeRecorderBackend();
     final recorder = RecordVoiceRecorder(
       backend: backend,

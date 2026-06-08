@@ -407,10 +407,16 @@ class UploadFilePayload {
   const UploadFilePayload({
     required this.filename,
     required this.bytes,
+    this.localPath = '',
+    this.recordingId = '',
+    this.chunkPaths = const [],
   });
 
   final String filename;
   final List<int> bytes;
+  final String localPath;
+  final String recordingId;
+  final List<String> chunkPaths;
 }
 
 class DocumentUploadResult {

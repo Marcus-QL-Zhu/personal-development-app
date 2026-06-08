@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:personal_development_app/audio/live_audio_capture_bridge.dart';
@@ -10,6 +11,8 @@ class _FakeRecorderBackend implements RecorderBackend {
       StreamController<List<int>>.broadcast();
   int startStreamCount = 0;
   int stopCount = 0;
+  RecordConfig? startedConfig;
+  String? startedPath;
 
   @override
   Future<void> dispose() async {
@@ -20,7 +23,11 @@ class _FakeRecorderBackend implements RecorderBackend {
   Future<bool> hasPermission() async => true;
 
   @override
-  Future<void> start(RecordConfig config, {required String path}) async {}
+  Future<void> start(RecordConfig config, {required String path}) async {
+    startedConfig = config;
+    startedPath = path;
+    await File(path).writeAsBytes(<int>[1, 2, 3, 4]);
+  }
 
   @override
   Future<Stream<List<int>>> startStream(RecordConfig config) async {
@@ -31,7 +38,7 @@ class _FakeRecorderBackend implements RecorderBackend {
   @override
   Future<String?> stop() async {
     stopCount += 1;
-    return null;
+    return startedPath;
   }
 }
 
@@ -59,6 +66,33 @@ class _FakeLiveAudioCaptureBridge implements LiveAudioCaptureBridge {
 }
 
 void main() {
+  test('clip recording uses persistent 16k mono m4a and keeps file after stop',
+      () async {
+    final tempDir = await Directory.systemTemp.createTemp('coach-recorder-test-');
+    final backend = _FakeRecorderBackend();
+    final recorder = RecordVoiceRecorder(
+      backend: backend,
+      recordingRoot: tempDir,
+      liveCaptureBridge: _FakeLiveAudioCaptureBridge(isSupported: false),
+    );
+
+    await recorder.start();
+    final clip = await recorder.stop();
+
+    expect(backend.startedConfig?.encoder, AudioEncoder.aacLc);
+    expect(backend.startedConfig?.sampleRate, 16000);
+    expect(backend.startedConfig?.numChannels, 1);
+    expect(backend.startedPath, endsWith('.m4a'));
+    expect(backend.startedPath, contains(tempDir.path));
+    expect(clip?.filename, endsWith('.m4a'));
+    expect(clip?.localPath, backend.startedPath);
+    expect(clip?.recordingId, isNotEmpty);
+    expect(await File(backend.startedPath!).exists(), isTrue);
+
+    await recorder.dispose();
+    await tempDir.delete(recursive: true);
+  });
+
   test('recorder prefers native live capture bridge when supported', () async {
     final backend = _FakeRecorderBackend();
     final bridge = _FakeLiveAudioCaptureBridge(isSupported: true);

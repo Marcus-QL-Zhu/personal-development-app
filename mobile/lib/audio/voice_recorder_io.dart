@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
 import '../backend/gamevoice_repository.dart';
@@ -79,20 +80,26 @@ class RecordVoiceRecorder implements VoiceRecorder {
     RecorderBackend? backend,
     LiveAudioCaptureBridge? liveCaptureBridge,
     bool? preferNativeLiveCapture,
+    Directory? recordingRoot,
   })  : _backend = backend ?? RecordPluginBackend(),
         _liveCaptureBridge = liveCaptureBridge ?? PlatformLiveAudioCaptureBridge(),
-        _preferNativeLiveCapture = preferNativeLiveCapture ?? Platform.isAndroid;
+        _preferNativeLiveCapture = preferNativeLiveCapture ?? Platform.isAndroid,
+        _recordingRoot = recordingRoot;
 
   final RecorderBackend _backend;
   final LiveAudioCaptureBridge _liveCaptureBridge;
   final bool _preferNativeLiveCapture;
+  final Directory? _recordingRoot;
   String? _activePath;
+  String? _activeRecordingId;
   bool _streamMode = false;
   bool _usingNativeLiveCapture = false;
 
   RecordConfig _buildClipConfig() {
     return RecordConfig(
-      encoder: AudioEncoder.wav,
+      encoder: AudioEncoder.aacLc,
+      sampleRate: 16000,
+      numChannels: 1,
       androidConfig: buildAndroidVoiceChatConfig(),
       autoGain: true,
       echoCancel: true,
@@ -126,13 +133,16 @@ class RecordVoiceRecorder implements VoiceRecorder {
 
   @override
   Future<void> start() async {
-    final tempDir = Directory.systemTemp;
-    final path = '${tempDir.path}${Platform.pathSeparator}gamevoice-${DateTime.now().millisecondsSinceEpoch}.wav';
+    final recordingId = DateTime.now().microsecondsSinceEpoch.toString();
+    final root = _recordingRoot ?? await _defaultRecordingRoot();
+    await root.create(recursive: true);
+    final path = '${root.path}${Platform.pathSeparator}coach-$recordingId.m4a';
     await _backend.start(
       _buildClipConfig(),
       path: path,
     );
     _activePath = path;
+    _activeRecordingId = recordingId;
   }
 
   @override
@@ -141,7 +151,9 @@ class RecordVoiceRecorder implements VoiceRecorder {
     _streamMode = false;
     _usingNativeLiveCapture = false;
     final resolvedPath = path ?? _activePath;
+    final recordingId = _activeRecordingId ?? '';
     _activePath = null;
+    _activeRecordingId = null;
     if (resolvedPath == null) {
       return null;
     }
@@ -152,11 +164,18 @@ class RecordVoiceRecorder implements VoiceRecorder {
     }
 
     final bytes = await file.readAsBytes();
-    await file.delete().catchError((_) => file);
     return UploadFilePayload(
       filename: file.uri.pathSegments.isEmpty ? 'voice-clip.wav' : file.uri.pathSegments.last,
       bytes: bytes,
+      localPath: file.path,
+      recordingId: recordingId,
+      chunkPaths: [file.path],
     );
+  }
+
+  Future<Directory> _defaultRecordingRoot() async {
+    final docs = await getApplicationDocumentsDirectory();
+    return Directory('${docs.path}${Platform.pathSeparator}pending_coach_recordings');
   }
 
   @override

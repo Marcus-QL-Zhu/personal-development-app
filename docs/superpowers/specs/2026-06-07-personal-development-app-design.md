@@ -29,7 +29,9 @@ Primary flow:
 4. Manager stops recording.
 5. App asks exactly one manual confirmation: whether to upload this recording.
 6. After confirmation, all downstream processing is automatic.
-7. Server saves audio, transcribes it, generates summaries, stores DB records, and appends to Feishu.
+7. App keeps the audio locally, obtains a short-lived Tencent Flash ASR signed upload URL from the backend, uploads audio directly to Tencent, and sends the transcript back to the backend.
+8. Server generates summaries from the transcript, stores DB records, and appends to Feishu.
+9. App deletes local audio only after the backend confirms session creation.
 
 No extra manual confirmation is required before Feishu sync. If quality is poor, the record is still synced with a quality warning.
 
@@ -82,11 +84,14 @@ If ASR or generation quality is weak, Feishu still receives the record, with `�
 
 ## Audio And ASR
 
-Realtime ASR is not needed for this product. The app records a normal clip and uploads it after the manager confirms.
+Realtime ASR is not needed for this product. The app records a normal clip and starts post-recording processing after the manager confirms.
 
 Recording assumptions:
 
 - Ordinary phone single-channel recording.
+- Mobile recording format is 16kHz mono m4a/AAC.
+- The recording is saved to app-local storage before any network call and is retained until backend session creation succeeds.
+- Long recordings are split by time into complete m4a chunks. Never split m4a/aac by raw bytes.
 - Manager and employee sit in stable positions with the phone between them.
 - Conversation is usually two speakers.
 
@@ -94,6 +99,9 @@ ASR recommendation:
 
 - Primary: Tencent Cloud recording file recognition flash API, because it supports HTTPS POST upload and synchronous fast return.
 - Enable speaker diarization where supported.
+- Backend generates short-lived Flash ASR signed upload requests. The mobile app uploads audio directly to Tencent, then submits transcript text/segments to the backend.
+- Use up to three idempotent retries for signing, ASR upload, and transcript submission.
+- If Flash ASR limits are exceeded, split by time/silence into valid audio chunks where possible; if still impossible, surface a retryable error while retaining local audio.
 - Fallback: Tencent Cloud async recording file recognition if flash API limits are exceeded or flash quality/feature support is insufficient.
 
 The system automatically infers speaker roles (manager vs employee). It does not ask the user to confirm or correct speaker mapping. If the inference is wrong, the product accepts that tradeoff to keep operation cost low.
@@ -182,9 +190,11 @@ Expected endpoints:
 - `GET /development/employees/{employee_id}`
 - `PUT /development/employees/{employee_id}`
 - `GET /development/employees/{employee_id}/coaching-sessions`
+- `POST /development/asr/flash-signatures`
 - `POST /development/employees/{employee_id}/coaching-sessions`
+- `POST /development/employees/{employee_id}/coaching-sessions/from-transcript`
 
-The upload endpoint accepts multipart field `clip`.
+The legacy upload endpoint accepts multipart field `clip`. New mobile clients should prefer the signed Flash ASR + transcript submission flow so the backend does not proxy large audio files.
 
 ## Mobile UI
 
@@ -247,7 +257,9 @@ Recording behavior:
 - The page must show an obvious recording state: red recording indicator, elapsed timer, and a clear motion/level/pulse affordance.
 - While recording, the primary button changes to `结束录音`.
 - Tapping `结束录音` stops the clip and shows the single required confirmation dialog asking whether to upload.
-- If confirmed, upload and all downstream processing are automatic.
+- If confirmed, ASR upload and all downstream processing are automatic.
+- Upload/processing failure keeps the local recording and shows a manual retry button.
+- Local recording files are deleted only after backend session creation succeeds.
 - While upload/ASR/generation/sync are running, show a processing state so the user does not think the app is stuck.
 
 ### coach详情

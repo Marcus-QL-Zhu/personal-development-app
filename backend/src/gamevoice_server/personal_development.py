@@ -546,12 +546,31 @@ class MiniMaxM3CoachingInsightGenerator:
 
     def generate(self, *, employee: dict[str, Any], transcript: dict[str, Any]) -> dict[str, str]:
         prompt = self._build_prompt(employee=employee, transcript=transcript)
-        payload: dict[str, Any] = {
+        payload = self._build_payload(prompt)
+        body = self._send_payload(payload)
+        content = self._extract_message_content(body)
+        try:
+            parsed = _parse_json_object(content)
+        except json.JSONDecodeError as exc:
+            repaired_content = self._repair_json_content(content=content, parse_error=str(exc))
+            parsed = _parse_json_object(repaired_content)
+        action_plan = _format_action_plan(parsed.get("action_plan"))
+        return {
+            "topic": str(parsed.get("topic") or "待提炼").strip() or "待提炼",
+            "content_summary": str(parsed.get("content_summary") or "").strip(),
+            "action_plan": action_plan,
+            "manager_feedback": str(parsed.get("manager_feedback") or "").strip(),
+        }
+
+    def _build_payload(self, prompt: str) -> dict[str, Any]:
+        return {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "thinking": {"type": self.thinking_type},
             "reasoning_split": self.reasoning_split,
         }
+
+    def _send_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = self.post(
             self.base_url,
             headers={
@@ -567,15 +586,29 @@ class MiniMaxM3CoachingInsightGenerator:
         base_resp = body.get("base_resp") or {}
         if base_resp.get("status_code") not in (None, 0):
             raise MiniMaxM3Error(str(base_resp))
-        content = str(body["choices"][0]["message"]["content"])
-        parsed = _parse_json_object(content)
-        action_plan = str(parsed.get("action_plan") or "").strip() or "本次未形成明确 Action Plan。"
-        return {
-            "topic": str(parsed.get("topic") or "待提炼").strip() or "待提炼",
-            "content_summary": str(parsed.get("content_summary") or "").strip(),
-            "action_plan": action_plan,
-            "manager_feedback": str(parsed.get("manager_feedback") or "").strip(),
-        }
+        return body
+
+    @staticmethod
+    def _extract_message_content(body: dict[str, Any]) -> str:
+        return str(body["choices"][0]["message"].get("content") or "")
+
+    def _repair_json_content(self, *, content: str, parse_error: str) -> str:
+        repair_prompt = json.dumps(
+            {
+                "task": "repair invalid JSON from a MiniMax coaching summary response",
+                "instructions": [
+                    "Return only one valid JSON object.",
+                    "Do not use markdown fences.",
+                    "Do not add or remove substantive coaching content.",
+                    "The JSON object must contain topic, content_summary, action_plan, manager_feedback.",
+                ],
+                "parse_error": parse_error,
+                "source_text": content,
+            },
+            ensure_ascii=False,
+        )
+        body = self._send_payload(self._build_payload(repair_prompt))
+        return self._extract_message_content(body)
 
     @staticmethod
     def _build_prompt(*, employee: dict[str, Any], transcript: dict[str, Any]) -> str:
@@ -624,13 +657,40 @@ class MiniMaxM3CoachingInsightGenerator:
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:
+    content = _strip_markdown_json_fence(str(content or "").strip())
     try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        if not match:
-            raise
-        return json.loads(match.group(0))
+        parsed = json.loads(content)
+        if not isinstance(parsed, dict):
+            raise json.JSONDecodeError("Expected JSON object", content, 0)
+        return parsed
+    except json.JSONDecodeError as direct_error:
+        decoder = json.JSONDecoder()
+        last_error = direct_error
+        for match in re.finditer(r"\{", content):
+            try:
+                parsed, _ = decoder.raw_decode(content[match.start() :])
+            except json.JSONDecodeError as exc:
+                last_error = exc
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        raise last_error
+
+
+def _strip_markdown_json_fence(content: str) -> str:
+    match = re.match(r"^```(?:json|JSON)?\s*(.*?)\s*```$", content, re.DOTALL)
+    return match.group(1).strip() if match else content
+
+
+def _format_action_plan(value: Any) -> str:
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value if str(item).strip()]
+        if not items:
+            return "本次未形成明确 Action Plan。"
+        return "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
+    if isinstance(value, dict):
+        value = json.dumps(value, ensure_ascii=False)
+    return str(value or "").strip() or "本次未形成明确 Action Plan。"
 
 
 class PlaceholderCoachingInsightGenerator:

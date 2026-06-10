@@ -206,12 +206,12 @@ def test_coaching_generation_formats_structured_output_as_plain_text():
     )
 
     assert result["topic"] == "ATS registration"
-    assert result["content_summary"] == "【Flow】register candidate\n【Risk】\nUse authorization."
+    assert result["content_summary"] == "【Flow】\nregister candidate\n【Risk】\nUse authorization."
     assert result["action_plan"] == (
         "1. Register candidate；负责人：Crany；截止时间：today；验收标准：candidate appears in CC\n"
         "2. Send authorization email；说明：use secretary flow"
     )
-    assert result["manager_feedback"] == "【Good】used examples.\nSlow down around compliance."
+    assert result["manager_feedback"] == "【Good】\nused examples.\nSlow down around compliance."
     combined = "\n".join(result.values())
     assert "**" not in combined
     assert "{'task'" not in combined
@@ -240,3 +240,70 @@ def test_action_plan_formats_numbered_python_literal_lines_as_plain_text():
         "1. Register Siyun；说明：use English name；截止时间：today\n"
         "2. Move candidate to ATS；负责人：Crany；验收标准：appears in shortlist"
     )
+
+
+def test_manager_feedback_splits_semicolon_labeled_sections():
+    result = _format_coaching_generation(
+        {
+            "topic": "Review",
+            "content_summary": "Summary",
+            "action_plan": "本次未形成明确 Action Plan。",
+            "manager_feedback": (
+                "explanation_clarity：The structure was clear but too fast.；"
+                "gallup_alignment：Input was supported with examples.；"
+                "action_item_clarity：Next steps need owners."
+            ),
+        }
+    )
+
+    assert result["manager_feedback"] == (
+        "【讲解清晰度】\nThe structure was clear but too fast.\n\n"
+        "【Gallup 沟通适配】\nInput was supported with examples.\n\n"
+        "【行动项清晰度】\nNext steps need owners."
+    )
+
+
+def test_manager_feedback_adds_newline_after_inline_section_heading():
+    result = _format_coaching_generation(
+        {
+            "topic": "Review",
+            "content_summary": "Summary",
+            "action_plan": "本次未形成明确 Action Plan。",
+            "manager_feedback": "【讲解清晰度】优点：框架清楚。\n\n【互动质量】员工有回应。",
+        }
+    )
+
+    assert result["manager_feedback"] == "【讲解清晰度】\n优点：框架清楚。\n\n【互动质量】\n员工有回应。"
+
+
+def test_manager_feedback_formats_nested_dict_section_content():
+    result = _format_coaching_generation(
+        {
+            "topic": "Review",
+            "content_summary": "Summary",
+            "action_plan": "本次未形成明确 Action Plan。",
+            "manager_feedback": (
+                "讲解清晰度：{'评分': '中等', '证据': '流程清楚', '不足': '跳跃较多'}；"
+                "互动质量：{'证据': '有提问', '建议': '让员工复述'}"
+            ),
+        }
+    )
+
+    assert "{'评分'" not in result["manager_feedback"]
+    assert result["manager_feedback"] == (
+        "【讲解清晰度】\n评分：中等；证据：流程清楚；不足：跳跃较多\n\n"
+        "【互动质量】\n证据：有提问；建议：让员工复述"
+    )
+
+
+def test_manager_feedback_formats_heading_followed_by_dict_content():
+    result = _format_coaching_generation(
+        {
+            "topic": "Review",
+            "content_summary": "Summary",
+            "action_plan": "本次未形成明确 Action Plan。",
+            "manager_feedback": "【讲解清晰度】\n{'评分': '中等', '证据': '流程清楚'}",
+        }
+    )
+
+    assert result["manager_feedback"] == "【讲解清晰度】\n评分：中等；证据：流程清楚"

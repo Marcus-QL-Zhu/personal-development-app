@@ -807,7 +807,20 @@ def _parse_structured_text(value: Any) -> Any:
             continue
         if isinstance(parsed, (list, dict)):
             return parsed
+    loose_dict = _parse_loose_python_dict(text)
+    if loose_dict is not None:
+        return loose_dict
     return value
+
+
+def _parse_loose_python_dict(text: str) -> dict[str, str] | None:
+    stripped = text.strip()
+    if not stripped.startswith("{") or not stripped.endswith("}"):
+        return None
+    pairs = re.findall(r"['\"]([^'\"]+)['\"]\s*:\s*['\"]([^'\"]*)['\"]", stripped)
+    if not pairs:
+        return None
+    return {key: value for key, value in pairs}
 
 
 def _parse_numbered_structured_lines(value: Any) -> Any:
@@ -834,6 +847,14 @@ def _parse_numbered_structured_lines(value: Any) -> Any:
 
 
 def _plain_text(value: Any) -> str:
+    if isinstance(value, list):
+        return "\n".join(
+            f"{index}. {_format_action_plan_item(item)}"
+            for index, item in enumerate(value, start=1)
+            if _format_action_plan_item(item)
+        )
+    if isinstance(value, dict):
+        return _format_action_plan_item(value)
     parsed = _parse_structured_text(value)
     if parsed is not value:
         if isinstance(parsed, list):
@@ -858,9 +879,74 @@ def _plain_text(value: Any) -> str:
     text = re.sub(r"__([^_]+)__\s*[:：]?", r"【\1】", text)
     text = re.sub(r"】[ \t]+", "】", text)
     text = re.sub(r"(?m)^\s*[-*]\s+", "", text)
+    text = _sectionize_labeled_plain_text(text)
+    text = re.sub(r"(?m)^(【[^】\n]{1,40}】)([^\n])", r"\1\n\2", text)
+    text = _format_heading_structured_blocks(text)
+    text = _format_standalone_structured_lines(text)
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _sectionize_labeled_plain_text(text: str) -> str:
+    labels = {
+        "explanation_clarity": "讲解清晰度",
+        "gallup_alignment": "Gallup 沟通适配",
+        "gallup_communication_fit": "Gallup 沟通适配",
+        "action_item_clarity": "行动项清晰度",
+        "interaction_quality": "互动质量",
+        "pace": "节奏",
+        "employee_feeling": "员工感受推测",
+        "employee_feelings": "员工感受推测",
+        "improvement": "改进建议",
+        "improvement_suggestions": "改进建议",
+    }
+    key_pattern = r"[A-Za-z_][A-Za-z0-9_ ]{2,40}|[\u4e00-\u9fffA-Za-z /]{2,24}"
+    matches = list(re.finditer(rf"(?:^|；)\s*({key_pattern})[:：]", text))
+    if len(matches) < 2:
+        return text
+    sections = []
+    for index, match in enumerate(matches):
+        raw_label = match.group(1).strip()
+        content_start = match.end()
+        content_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        content = text[content_start:content_end].lstrip("； \t").strip()
+        if not content:
+            continue
+        content = _plain_text(content)
+        normalized = raw_label.lower().replace(" ", "_")
+        label = labels.get(normalized, raw_label)
+        sections.append(f"【{label}】\n{content}")
+    return "\n\n".join(sections) if sections else text
+
+
+def _format_heading_structured_blocks(text: str) -> str:
+    lines = text.splitlines()
+    formatted: list[str] = []
+    index = 0
+    while index < len(lines):
+        formatted.append(lines[index])
+        if index + 1 < len(lines):
+            next_line = lines[index + 1].strip()
+            parsed = _parse_structured_text(next_line)
+            if isinstance(parsed, (list, dict)):
+                formatted.append(_plain_text(parsed))
+                index += 2
+                continue
+        index += 1
+    return "\n".join(formatted)
+
+
+def _format_standalone_structured_lines(text: str) -> str:
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        parsed = _parse_structured_text(stripped)
+        if isinstance(parsed, (list, dict)):
+            lines.append(_plain_text(parsed))
+        else:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def _coaching_generation_validation_errors(parsed: dict[str, Any]) -> list[str]:

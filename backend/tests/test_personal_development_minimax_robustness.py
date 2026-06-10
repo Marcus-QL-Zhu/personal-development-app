@@ -307,3 +307,24 @@ def test_manager_feedback_formats_heading_followed_by_dict_content():
     )
 
     assert result["manager_feedback"] == "【讲解清晰度】\n评分：中等；证据：流程清楚"
+
+
+def test_manager_feedback_formats_line_start_chinese_labels_as_sections():
+    result = _format_coaching_generation(
+        {
+            "topic": "Review",
+            "content_summary": "Summary",
+            "action_plan": "本次未形成明确 Action Plan。",
+            "manager_feedback": (
+                "讲解清晰度：经理讲得清楚。\n\n"
+                "Gallup 沟通适配：适合搜集优势。\n\n"
+                "行动项清晰度：有验收标准。"
+            ),
+        }
+    )
+
+    assert result["manager_feedback"] == (
+        "【讲解清晰度】\n经理讲得清楚。\n\n"
+        "【Gallup 沟通适配】\n适合搜集优势。\n\n"
+        "【行动项清晰度】\n有验收标准。"
+    )

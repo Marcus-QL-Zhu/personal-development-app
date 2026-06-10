@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -535,6 +536,7 @@ class MiniMaxM3CoachingInsightGenerator:
         reasoning_split: bool = True,
         post: Any | None = None,
         timeout_seconds: int = 180,
+        retry_delay_seconds: float = 2,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url
@@ -543,24 +545,26 @@ class MiniMaxM3CoachingInsightGenerator:
         self.reasoning_split = reasoning_split
         self.post = post or self._post
         self.timeout_seconds = timeout_seconds
+        self.retry_delay_seconds = retry_delay_seconds
 
     def generate(self, *, employee: dict[str, Any], transcript: dict[str, Any]) -> dict[str, str]:
         prompt = self._build_prompt(employee=employee, transcript=transcript)
         payload = self._build_payload(prompt)
         body = self._send_payload(payload)
         content = self._extract_message_content(body)
-        try:
-            parsed = _parse_json_object(content)
-        except json.JSONDecodeError as exc:
-            repaired_content = self._repair_json_content(content=content, parse_error=str(exc))
-            parsed = _parse_json_object(repaired_content)
-        action_plan = _format_action_plan(parsed.get("action_plan"))
-        return {
-            "topic": str(parsed.get("topic") or "待提炼").strip() or "待提炼",
-            "content_summary": str(parsed.get("content_summary") or "").strip(),
-            "action_plan": action_plan,
-            "manager_feedback": str(parsed.get("manager_feedback") or "").strip(),
-        }
+        parsed = self._parse_or_repair_content(content)
+        validation_errors = _coaching_generation_validation_errors(parsed)
+        if validation_errors:
+            regenerated_content = self._regenerate_complete_json(
+                original_prompt=prompt,
+                invalid_content=content,
+                validation_errors=validation_errors,
+            )
+            parsed = self._parse_or_repair_content(regenerated_content)
+            validation_errors = _coaching_generation_validation_errors(parsed)
+        if validation_errors:
+            raise MiniMaxM3Error(f"MiniMax M3 returned incomplete coaching summary: {validation_errors}")
+        return _format_coaching_generation(parsed)
 
     def _build_payload(self, prompt: str) -> dict[str, Any]:
         return {
@@ -571,15 +575,27 @@ class MiniMaxM3CoachingInsightGenerator:
         }
 
     def _send_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        response = self.post(
-            self.base_url,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=self.timeout_seconds,
-        )
+        last_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                response = self.post(
+                    self.base_url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=self.timeout_seconds,
+                )
+                break
+            except MiniMaxM3Error as exc:
+                last_error = exc
+                if attempt >= 3 or not _is_retryable_minimax_error(str(exc)):
+                    raise
+                if self.retry_delay_seconds > 0:
+                    time.sleep(self.retry_delay_seconds * attempt)
+        else:
+            raise MiniMaxM3Error(str(last_error or "MiniMax M3 request failed"))
         if getattr(response, "status_code", 200) >= 400:
             raise MiniMaxM3Error(f"MiniMax M3 HTTP error {getattr(response, 'status_code', '?')}")
         body = response.json()
@@ -591,6 +607,13 @@ class MiniMaxM3CoachingInsightGenerator:
     @staticmethod
     def _extract_message_content(body: dict[str, Any]) -> str:
         return str(body["choices"][0]["message"].get("content") or "")
+
+    def _parse_or_repair_content(self, content: str) -> dict[str, Any]:
+        try:
+            return _parse_json_object(content)
+        except json.JSONDecodeError as exc:
+            repaired_content = self._repair_json_content(content=content, parse_error=str(exc))
+            return _parse_json_object(repaired_content)
 
     def _repair_json_content(self, *, content: str, parse_error: str) -> str:
         repair_prompt = json.dumps(
@@ -608,6 +631,33 @@ class MiniMaxM3CoachingInsightGenerator:
             ensure_ascii=False,
         )
         body = self._send_payload(self._build_payload(repair_prompt))
+        return self._extract_message_content(body)
+
+    def _regenerate_complete_json(
+        self,
+        *,
+        original_prompt: str,
+        invalid_content: str,
+        validation_errors: list[str],
+    ) -> str:
+        regenerate_prompt = json.dumps(
+            {
+                "task": "regenerate a complete coaching summary JSON",
+                "instructions": [
+                    "Return only one valid JSON object.",
+                    "Do not use markdown fences.",
+                    "Use the original transcript and employee context.",
+                    "content_summary and manager_feedback must be non-empty and evidence-based.",
+                    "topic must be specific, not 待提炼, Pending review, or a placeholder.",
+                    "action_plan may say 本次未形成明确 Action Plan。 only when the transcript contains no concrete action plan.",
+                ],
+                "validation_errors": validation_errors,
+                "original_request_json": original_prompt,
+                "previous_invalid_response": invalid_content,
+            },
+            ensure_ascii=False,
+        )
+        body = self._send_payload(self._build_payload(regenerate_prompt))
         return self._extract_message_content(body)
 
     @staticmethod
@@ -684,13 +734,64 @@ def _strip_markdown_json_fence(content: str) -> str:
 
 def _format_action_plan(value: Any) -> str:
     if isinstance(value, list):
-        items = [str(item).strip() for item in value if str(item).strip()]
+        items = [_format_action_plan_item(item) for item in value]
+        items = [item for item in items if item]
         if not items:
             return "本次未形成明确 Action Plan。"
         return "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
     if isinstance(value, dict):
-        value = json.dumps(value, ensure_ascii=False)
+        return _format_action_plan_item(value) or "本次未形成明确 Action Plan。"
     return str(value or "").strip() or "本次未形成明确 Action Plan。"
+
+
+def _format_action_plan_item(value: Any) -> str:
+    if isinstance(value, dict):
+        parts = []
+        for key, item_value in value.items():
+            text = str(item_value or "").strip()
+            if text:
+                parts.append(f"{key}: {text}")
+        return "; ".join(parts)
+    return str(value or "").strip()
+
+
+def _format_coaching_generation(parsed: dict[str, Any]) -> dict[str, str]:
+    action_plan = _format_action_plan(parsed.get("action_plan"))
+    return {
+        "topic": str(parsed.get("topic") or "待提炼").strip() or "待提炼",
+        "content_summary": str(parsed.get("content_summary") or "").strip(),
+        "action_plan": action_plan,
+        "manager_feedback": str(parsed.get("manager_feedback") or "").strip(),
+    }
+
+
+def _coaching_generation_validation_errors(parsed: dict[str, Any]) -> list[str]:
+    formatted = _format_coaching_generation(parsed)
+    errors: list[str] = []
+    if formatted["topic"].strip().lower() in {"", "待提炼", "pending review", "未提供录音内容"}:
+        errors.append("topic is placeholder")
+    if not formatted["content_summary"].strip():
+        errors.append("content_summary is empty")
+    if not formatted["manager_feedback"].strip():
+        errors.append("manager_feedback is empty")
+    return errors
+
+
+def _is_retryable_minimax_error(message: str) -> bool:
+    lowered = message.lower()
+    return any(
+        token in lowered
+        for token in (
+            "502",
+            "503",
+            "504",
+            "429",
+            "bad gateway",
+            "timeout",
+            "temporarily",
+            "new_sensitive",
+        )
+    )
 
 
 class PlaceholderCoachingInsightGenerator:

@@ -1,5 +1,7 @@
 from gamevoice_server.personal_development import MiniMaxM3CoachingInsightGenerator
 from gamevoice_server.personal_development import MiniMaxM3Error
+from gamevoice_server.personal_development import _format_action_plan
+from gamevoice_server.personal_development import _format_coaching_generation
 
 
 def test_minimax_m3_generator_parses_fenced_json_and_list_action_plan():
@@ -134,7 +136,7 @@ def test_minimax_m3_generator_regenerates_when_required_fields_are_empty():
     assert result == {
         "topic": "Candidate registration flow",
         "content_summary": "Explained authorization email, resume handoff, and privacy-law caveats.",
-        "action_plan": "1. task: Register candidate; owner: Crany; deadline: today",
+        "action_plan": "1. Register candidate；负责人：Crany；截止时间：today",
         "manager_feedback": "The coach used concrete steps but should slow down near compliance details.",
     }
 
@@ -183,3 +185,58 @@ def test_minimax_m3_generator_retries_transient_sensitive_or_gateway_errors():
     assert result["topic"] == "Call confidence coaching"
     assert result["content_summary"]
     assert result["manager_feedback"]
+
+
+def test_coaching_generation_formats_structured_output_as_plain_text():
+    result = _format_coaching_generation(
+        {
+            "topic": "**ATS registration**",
+            "content_summary": "**Flow**: register candidate\n### Risk\nUse authorization.",
+            "action_plan": [
+                {
+                    "task": "Register candidate",
+                    "owner": "Crany",
+                    "deadline": "today",
+                    "acceptance_criteria": "candidate appears in CC",
+                },
+                {"item": "Send authorization email", "detail": "use secretary flow"},
+            ],
+            "manager_feedback": "**Good**: used examples.\n- Slow down around compliance.",
+        }
+    )
+
+    assert result["topic"] == "ATS registration"
+    assert result["content_summary"] == "【Flow】register candidate\n【Risk】\nUse authorization."
+    assert result["action_plan"] == (
+        "1. Register candidate；负责人：Crany；截止时间：today；验收标准：candidate appears in CC\n"
+        "2. Send authorization email；说明：use secretary flow"
+    )
+    assert result["manager_feedback"] == "【Good】used examples.\nSlow down around compliance."
+    combined = "\n".join(result.values())
+    assert "**" not in combined
+    assert "{'task'" not in combined
+    assert "###" not in combined
+
+
+def test_action_plan_formats_python_literal_strings_as_plain_text():
+    value = (
+        "[{'task': 'Practice phone call', 'owner': 'Crany', 'deadline': 'tomorrow'}, "
+        "{'task': 'Review industry notes', 'acceptance': 'can explain three facts'}]"
+    )
+
+    assert _format_action_plan(value) == (
+        "1. Practice phone call；负责人：Crany；截止时间：tomorrow\n"
+        "2. Review industry notes；验收标准：can explain three facts"
+    )
+
+
+def test_action_plan_formats_numbered_python_literal_lines_as_plain_text():
+    value = (
+        "1. {'task': 'Register Siyun', 'detail': 'use English name', 'deadline': 'today'}\n"
+        "2. {'task': 'Move candidate to ATS', 'owner': 'Crany', 'acceptance': 'appears in shortlist'}"
+    )
+
+    assert _format_action_plan(value) == (
+        "1. Register Siyun；说明：use English name；截止时间：today\n"
+        "2. Move candidate to ATS；负责人：Crany；验收标准：appears in shortlist"
+    )

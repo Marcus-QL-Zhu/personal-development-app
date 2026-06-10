@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac
+import ast
 import json
 import re
 import sqlite3
@@ -679,6 +680,7 @@ class MiniMaxM3CoachingInsightGenerator:
                 "manager_feedback 只给 manager 在 app 内查看，不进入飞书；要评价讲解清晰度、Gallup 沟通适配、行动项清晰度、节奏、互动质量，并用证据链推测员工感受。",
                 "Gallup 不进入员工可见总结或飞书内容，只用于 manager_feedback。",
                 "如果 transcript 涉及政治、地缘、公共事件或争议性社会议题，只做中立的沟通结构、论证框架、证据类型和表达方式总结；不要输出立场判断、动员性措辞或超出录音的政治结论。",
+                "所有字段都面向人阅读，使用 plain text；不要输出 Markdown 粗体、Markdown 标题、JSON、Python dict/list、代码块或 HTML。",
                 "输出 JSON，字段为 topic, content_summary, action_plan, manager_feedback。",
             ],
         }
@@ -733,6 +735,12 @@ def _strip_markdown_json_fence(content: str) -> str:
 
 
 def _format_action_plan(value: Any) -> str:
+    parsed_value = _parse_structured_text(value)
+    if parsed_value is not value:
+        return _format_action_plan(parsed_value)
+    parsed_lines = _parse_numbered_structured_lines(value)
+    if parsed_lines is not value:
+        return _format_action_plan(parsed_lines)
     if isinstance(value, list):
         items = [_format_action_plan_item(item) for item in value]
         items = [item for item in items if item]
@@ -741,28 +749,118 @@ def _format_action_plan(value: Any) -> str:
         return "\n".join(f"{index}. {item}" for index, item in enumerate(items, start=1))
     if isinstance(value, dict):
         return _format_action_plan_item(value) or "本次未形成明确 Action Plan。"
-    return str(value or "").strip() or "本次未形成明确 Action Plan。"
+    return _plain_text(value) or "本次未形成明确 Action Plan。"
 
 
 def _format_action_plan_item(value: Any) -> str:
     if isinstance(value, dict):
-        parts = []
+        primary = ""
+        parts: list[str] = []
+        labels = {
+            "owner": "负责人",
+            "deadline": "截止时间",
+            "deliverable": "交付物",
+            "acceptance": "验收标准",
+            "acceptance_criteria": "验收标准",
+            "criteria": "验收标准",
+            "detail": "说明",
+            "details": "说明",
+            "source": "依据",
+            "evidence": "依据",
+        }
         for key, item_value in value.items():
-            text = str(item_value or "").strip()
-            if text:
-                parts.append(f"{key}: {text}")
-        return "; ".join(parts)
-    return str(value or "").strip()
+            text = _plain_text(item_value)
+            if not text:
+                continue
+            normalized_key = str(key).strip().lower()
+            if normalized_key in {"task", "item", "action", "todo"} and not primary:
+                primary = text
+                continue
+            label = labels.get(normalized_key, str(key).strip())
+            parts.append(f"{label}：{text}")
+        if primary and parts:
+            return f"{primary}；" + "；".join(parts)
+        return primary or "；".join(parts)
+    return _plain_text(value)
 
 
 def _format_coaching_generation(parsed: dict[str, Any]) -> dict[str, str]:
     action_plan = _format_action_plan(parsed.get("action_plan"))
     return {
-        "topic": str(parsed.get("topic") or "待提炼").strip() or "待提炼",
-        "content_summary": str(parsed.get("content_summary") or "").strip(),
+        "topic": _plain_text(parsed.get("topic")) or "待提炼",
+        "content_summary": _plain_text(parsed.get("content_summary")),
         "action_plan": action_plan,
-        "manager_feedback": str(parsed.get("manager_feedback") or "").strip(),
+        "manager_feedback": _plain_text(parsed.get("manager_feedback")),
     }
+
+
+def _parse_structured_text(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text or text[0] not in "[{":
+        return value
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            parsed = parser(text)
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(parsed, (list, dict)):
+            return parsed
+    return value
+
+
+def _parse_numbered_structured_lines(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    parsed_items = []
+    saw_structured_line = False
+    for raw_line in value.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.match(r"^\d+[\.\)、)]\s*(\{.*\}|\[.*\])\s*$", line)
+        if not match:
+            return value
+        parsed = _parse_structured_text(match.group(1))
+        if parsed is match.group(1):
+            return value
+        if isinstance(parsed, list):
+            parsed_items.extend(parsed)
+        else:
+            parsed_items.append(parsed)
+        saw_structured_line = True
+    return parsed_items if saw_structured_line else value
+
+
+def _plain_text(value: Any) -> str:
+    parsed = _parse_structured_text(value)
+    if parsed is not value:
+        if isinstance(parsed, list):
+            return "\n".join(
+                f"{index}. {_format_action_plan_item(item)}"
+                for index, item in enumerate(parsed, start=1)
+                if _format_action_plan_item(item)
+            )
+        if isinstance(parsed, dict):
+            return _format_action_plan_item(parsed)
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    whole_bold = re.fullmatch(r"\*\*(.+?)\*\*", text, flags=re.DOTALL)
+    if whole_bold:
+        return whole_bold.group(1).strip()
+    text = re.sub(r"```(?:\w+)?", "", text)
+    text = text.replace("```", "")
+    text = re.sub(r"^\s*#{1,6}\s*(.+?)\s*$", r"【\1】", text, flags=re.MULTILINE)
+    text = re.sub(r"\*\*(.+?)\*\*\s*[:：]?", r"【\1】", text)
+    text = re.sub(r"__([^_]+)__\s*[:：]?", r"【\1】", text)
+    text = re.sub(r"】[ \t]+", "】", text)
+    text = re.sub(r"(?m)^\s*[-*]\s+", "", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _coaching_generation_validation_errors(parsed: dict[str, Any]) -> list[str]:

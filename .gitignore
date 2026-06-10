@@ -2,6 +2,8 @@
 __pycache__/
 .venv/
 .dart_tool/
+.flutter-plugins-dependencies
+.idea/
 .gradle/
 .kotlin/
 dist/
@@ -13,6 +15,7 @@ build/
 *.log
 *.apk
 *.aab
+*.iml
 .env
 .env.*
 !.env.example
@@ -32,3 +35,5 @@ docs/superpowers/plans/
 docs/handoff-*.md
 docs/parallel-dev-changelog.md
 并行开发工作守则.txt
+mobile/android/local.properties
+mobile/android/app/src/main/java/

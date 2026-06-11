@@ -868,6 +868,7 @@ def _plain_text(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
+    text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     whole_bold = re.fullmatch(r"\*\*(.+?)\*\*", text, flags=re.DOTALL)
     if whole_bold:
@@ -900,6 +901,7 @@ def _sectionize_labeled_plain_text(text: str) -> str:
         "employee_feelings": "员工感受推测",
         "improvement": "改进建议",
         "improvement_suggestions": "改进建议",
+        "整体观察": "整体观察",
     }
     key_pattern = r"[A-Za-z_][A-Za-z0-9_ ]{2,40}|[\u4e00-\u9fffA-Za-z /]{2,24}"
     matches = list(re.finditer(rf"(?:^|；)\s*({key_pattern})[:：]", text, flags=re.MULTILINE))

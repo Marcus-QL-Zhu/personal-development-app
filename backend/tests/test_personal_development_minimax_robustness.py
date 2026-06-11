@@ -328,3 +328,26 @@ def test_manager_feedback_formats_line_start_chinese_labels_as_sections():
         "【Gallup 沟通适配】\n适合搜集优势。\n\n"
         "【行动项清晰度】\n有验收标准。"
     )
+
+
+def test_generation_converts_literal_newline_escapes_before_formatting():
+    result = _format_coaching_generation(
+        {
+            "topic": "Review",
+            "content_summary": "第一段。\\n\\n第二段。",
+            "action_plan": "1. 完成 A。\\n2. 完成 B。",
+            "manager_feedback": (
+                "整体观察：经理追问清楚。\\n\\n"
+                "讲解清晰度：框架清楚。\\n\\n"
+                "Gallup 沟通适配：适合搜集优势。"
+            ),
+        }
+    )
+
+    assert result["content_summary"] == "第一段。\n\n第二段。"
+    assert result["action_plan"] == "1. 完成 A。\n2. 完成 B。"
+    assert result["manager_feedback"] == (
+        "【整体观察】\n经理追问清楚。\n\n"
+        "【讲解清晰度】\n框架清楚。\n\n"
+        "【Gallup 沟通适配】\n适合搜集优势。"
+    )

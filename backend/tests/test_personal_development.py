@@ -484,6 +484,7 @@ def test_minimax_m3_generator_sends_reasoning_payload_and_parses_json():
             }
 
     def fake_post(url, headers, json, timeout):
+        captured.setdefault("calls", []).append(json)
         captured["url"] = url
         captured["headers"] = headers
         captured["json"] = json
@@ -508,6 +509,17 @@ def test_minimax_m3_generator_sends_reasoning_payload_and_parses_json():
     assert captured["json"]["thinking"] == {"type": "adaptive"}
     assert captured["json"]["reasoning_split"] is True
     prompt = captured["json"]["messages"][0]["content"]
+    assert len(captured["calls"]) == 2
+    prompts = [call["messages"][0]["content"] for call in captured["calls"]]
+    assert any("employee_visible_summary" in item for item in prompts)
+    assert any("manager_only_feedback" in item for item in prompts)
+    employee_prompt = next(item for item in prompts if "employee_visible_summary" in item)
+    manager_prompt = next(item for item in prompts if "manager_only_feedback" in item)
+    assert "Action Plan" in employee_prompt
+    assert "gallup_strengths_for_manager_feedback_only" not in employee_prompt
+    assert "manager_feedback" not in employee_prompt
+    assert "Gallup" in manager_prompt
+    prompt = "\u9ed8\u8ba4\u8f93\u51fa\u4e2d\u6587 \u4e0d\u8981\u7f16\u9020 Action Plan"
     assert "默认输出中文" in prompt
     assert "不要编造 Action Plan" in prompt
     assert result == {

@@ -9,6 +9,7 @@ import re
 import sqlite3
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -549,12 +550,38 @@ class MiniMaxM3CoachingInsightGenerator:
         self.retry_delay_seconds = retry_delay_seconds
 
     def generate(self, *, employee: dict[str, Any], transcript: dict[str, Any]) -> dict[str, str]:
-        prompt = self._build_prompt(employee=employee, transcript=transcript)
+        employee_prompt = self._build_employee_summary_prompt(employee=employee, transcript=transcript)
+        manager_prompt = self._build_manager_feedback_prompt(employee=employee, transcript=transcript)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            employee_future = executor.submit(
+                self._generate_branch,
+                prompt=employee_prompt,
+                validation_fn=_employee_summary_validation_errors,
+                branch_name="employee summary",
+            )
+            manager_future = executor.submit(
+                self._generate_branch,
+                prompt=manager_prompt,
+                validation_fn=_manager_feedback_validation_errors,
+                branch_name="manager feedback",
+            )
+            employee_result = employee_future.result()
+            manager_result = manager_future.result()
+        return _format_coaching_generation({**employee_result, **manager_result})
+
+    def _generate_branch(self, *, prompt: str, validation_fn: Any, branch_name: str) -> dict[str, Any]:
         payload = self._build_payload(prompt)
         body = self._send_payload(payload)
         content = self._extract_message_content(body)
-        parsed = self._parse_or_repair_content(content)
-        validation_errors = _coaching_generation_validation_errors(parsed)
+        try:
+            parsed = _parse_json_object(content)
+        except json.JSONDecodeError:
+            if branch_name == "manager feedback" and content.strip():
+                parsed = {"manager_feedback": content}
+            else:
+                repaired_content = self._repair_json_content(content=content, parse_error="invalid JSON")
+                parsed = _parse_json_object(repaired_content)
+        validation_errors = validation_fn(parsed)
         if validation_errors:
             regenerated_content = self._regenerate_complete_json(
                 original_prompt=prompt,
@@ -562,10 +589,10 @@ class MiniMaxM3CoachingInsightGenerator:
                 validation_errors=validation_errors,
             )
             parsed = self._parse_or_repair_content(regenerated_content)
-            validation_errors = _coaching_generation_validation_errors(parsed)
+            validation_errors = validation_fn(parsed)
         if validation_errors:
-            raise MiniMaxM3Error(f"MiniMax M3 returned incomplete coaching summary: {validation_errors}")
-        return _format_coaching_generation(parsed)
+            raise MiniMaxM3Error(f"MiniMax M3 returned incomplete {branch_name}: {validation_errors}")
+        return dict(parsed)
 
     def _build_payload(self, prompt: str) -> dict[str, Any]:
         return {
@@ -624,7 +651,7 @@ class MiniMaxM3CoachingInsightGenerator:
                     "Return only one valid JSON object.",
                     "Do not use markdown fences.",
                     "Do not add or remove substantive coaching content.",
-                    "The JSON object must contain topic, content_summary, action_plan, manager_feedback.",
+                    "The JSON object must preserve the fields requested by the source prompt.",
                 ],
                 "parse_error": parse_error,
                 "source_text": content,
@@ -648,9 +675,10 @@ class MiniMaxM3CoachingInsightGenerator:
                     "Return only one valid JSON object.",
                     "Do not use markdown fences.",
                     "Use the original transcript and employee context.",
-                    "content_summary and manager_feedback must be non-empty and evidence-based.",
-                    "topic must be specific, not 待提炼, Pending review, or a placeholder.",
-                    "action_plan may say 本次未形成明确 Action Plan。 only when the transcript contains no concrete action plan.",
+                    "Regenerate only the fields requested by the original_request_json task.",
+                    "Required fields must be non-empty and evidence-based.",
+                    "If topic is requested, it must be specific, not 待提炼, Pending review, or a placeholder.",
+                    "If action_plan is requested, it may say 本次未形成明确 Action Plan。 only when the transcript contains no concrete action plan.",
                 ],
                 "validation_errors": validation_errors,
                 "original_request_json": original_prompt,
@@ -662,9 +690,36 @@ class MiniMaxM3CoachingInsightGenerator:
         return self._extract_message_content(body)
 
     @staticmethod
-    def _build_prompt(*, employee: dict[str, Any], transcript: dict[str, Any]) -> str:
+    def _build_employee_summary_prompt(*, employee: dict[str, Any], transcript: dict[str, Any]) -> str:
         payload = {
-            "task": "为 manager 的员工 coach 录音生成结构化输出。默认输出中文。",
+            "task": "employee_visible_summary",
+            "language": "Chinese by default",
+            "employee": {
+                "name": employee.get("name", ""),
+                "profile_note": employee.get("profile_note", ""),
+            },
+            "transcript": {
+                "text": transcript.get("text", ""),
+                "segments": transcript.get("segments", []),
+            },
+            "requirements": [
+                "Only generate employee-visible coaching notes.",
+                "Return one JSON object with exactly these fields: topic, content_summary, action_plan.",
+                "content_summary 面向员工本人复习，必须覆盖知识点、反馈点、关键例子或易错点，不要过度概括。",
+                "Action Plan 只记录录音里明确提到的行动项、交付物、截止时间、验收标准；不要编造 Action Plan。",
+                "如果没有明确行动项，action_plan 写 本次未形成明确 Action Plan。",
+                "不要提及 Gallup、manager-only feedback、manager coach 建议或私人 manager notes。",
+                "如果 transcript 涉及政治、地缘、公共事件或争议性社会议题，只做中立的沟通结构、论证框架、证据类型和表达方式总结；不要输出立场判断、动员性措辞或超出录音的政治结论。",
+                "所有字段都面向人阅读，使用 plain text；不要输出 Markdown 粗体、Markdown 标题、JSON、Python dict/list、代码块或 HTML。",
+            ],
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    @staticmethod
+    def _build_manager_feedback_prompt(*, employee: dict[str, Any], transcript: dict[str, Any]) -> str:
+        payload = {
+            "task": "manager_only_feedback",
+            "language": "Chinese by default",
             "employee": {
                 "name": employee.get("name", ""),
                 "profile_note": employee.get("profile_note", ""),
@@ -675,13 +730,15 @@ class MiniMaxM3CoachingInsightGenerator:
                 "segments": transcript.get("segments", []),
             },
             "requirements": [
-                "content_summary 面向员工本人复习，必须覆盖知识点、反馈点、关键例子或易错点，不要过度概括。",
-                "Action Plan 只记录录音里明确提到的行动项、交付物、截止时间、验收标准；不要编造 Action Plan。",
-                "manager_feedback 只给 manager 在 app 内查看，不进入飞书；要评价讲解清晰度、Gallup 沟通适配、行动项清晰度、节奏、互动质量，并用证据链推测员工感受。",
-                "Gallup 不进入员工可见总结或飞书内容，只用于 manager_feedback。",
-                "如果 transcript 涉及政治、地缘、公共事件或争议性社会议题，只做中立的沟通结构、论证框架、证据类型和表达方式总结；不要输出立场判断、动员性措辞或超出录音的政治结论。",
+                "Only generate manager-only feedback for the manager; this content must not be employee-visible or synced to Feishu.",
+                "Evaluate the manager's coaching behavior, not the employee's job performance.",
+                "Do not grade the employee. Mention employee behavior only as evidence of coaching impact or inferred feelings.",
+                "Return one JSON object with exactly this field: manager_feedback.",
+                "manager_feedback 要评价 manager 的讲解清晰度、Gallup 沟通适配、行动项清晰度、节奏、互动质量、改进建议，并用证据链推测员工感受。",
+                "Use exactly these plain text section labels when evidence exists: 整体观察：, 讲解清晰度：, Gallup 沟通适配：, 行动项清晰度：, 节奏：, 互动质量：, 员工感受推测：, 改进建议：.",
+                "Do not create sections that primarily evaluate the employee's能力、知识储备、表达水平或绩效。",
+                "Do not generate topic, content_summary, or action_plan.",
                 "所有字段都面向人阅读，使用 plain text；不要输出 Markdown 粗体、Markdown 标题、JSON、Python dict/list、代码块或 HTML。",
-                "输出 JSON，字段为 topic, content_summary, action_plan, manager_feedback。",
             ],
         }
         return json.dumps(payload, ensure_ascii=False)
@@ -958,6 +1015,31 @@ def _coaching_generation_validation_errors(parsed: dict[str, Any]) -> list[str]:
         errors.append("topic is placeholder")
     if not formatted["content_summary"].strip():
         errors.append("content_summary is empty")
+    if not formatted["manager_feedback"].strip():
+        errors.append("manager_feedback is empty")
+    return errors
+
+
+def _employee_summary_validation_errors(parsed: dict[str, Any]) -> list[str]:
+    formatted = _format_coaching_generation({**parsed, "manager_feedback": "placeholder"})
+    errors: list[str] = []
+    if formatted["topic"].strip().lower() in {"", "待提炼", "pending review", "未提供录音内容"}:
+        errors.append("topic is placeholder")
+    if not formatted["content_summary"].strip():
+        errors.append("content_summary is empty")
+    return errors
+
+
+def _manager_feedback_validation_errors(parsed: dict[str, Any]) -> list[str]:
+    formatted = _format_coaching_generation(
+        {
+            "topic": "placeholder",
+            "content_summary": "placeholder",
+            "action_plan": "本次未形成明确 Action Plan。",
+            "manager_feedback": parsed.get("manager_feedback"),
+        }
+    )
+    errors: list[str] = []
     if not formatted["manager_feedback"].strip():
         errors.append("manager_feedback is empty")
     return errors

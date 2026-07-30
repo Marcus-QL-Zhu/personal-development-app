@@ -6,8 +6,9 @@ import 'package:personal_development_app/development/development_home_screen.dar
 import 'package:personal_development_app/development/development_repository.dart';
 
 void main() {
-  testWidgets('creates employee and uploads confirmed coach recording',
-      (tester) async {
+  testWidgets('creates employee and uploads confirmed coach recording', (
+    tester,
+  ) async {
     final repository = _FakeDevelopmentRepository();
     final recorder = _FakeVoiceRecorder();
 
@@ -22,8 +23,14 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.widgetWithText(TextField, '姓名'), 'Alice');
-    await tester.enterText(find.widgetWithText(TextField, 'Gallup 34 排序'), '1 Learner\n2 Strategic');
-    await tester.enterText(find.widgetWithText(TextField, '自然语言介绍'), 'New consultant.');
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Gallup 34 排序'),
+      '1 Learner\n2 Strategic',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, '自然语言介绍'),
+      'New consultant.',
+    );
     await tester.tap(find.text('保存员工档案'));
     await tester.pumpAndSettle();
 
@@ -128,8 +135,26 @@ class _FakeDevelopmentRepository implements DevelopmentRepository {
   @override
   Future<List<DevelopmentCoachingSession>> listCoachingSessions({
     required String employeeId,
-  }) async =>
-      sessions;
+  }) async => sessions;
+
+  @override
+  Future<DevelopmentCoachingSession> retryCoachingSessionSync({
+    required String employeeId,
+    required String sessionId,
+  }) async {
+    final index = sessions.indexWhere(
+      (item) => item.employeeId == employeeId && item.id == sessionId,
+    );
+    if (index < 0) {
+      throw StateError('coaching session not found');
+    }
+    final updated = sessions[index].copyWith(
+      syncStatus: 'synced',
+      syncError: '',
+    );
+    sessions[index] = updated;
+    return updated;
+  }
 
   @override
   Future<DevelopmentCoachingSession> uploadCoachingSession({

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import hashlib
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
-from urllib import parse, request
+from urllib import error, parse, request
 from uuid import uuid4
 
 
@@ -315,8 +315,14 @@ class FeishuOpenApiClient:
     @staticmethod
     def _send_request(url: str, body: bytes, headers: dict[str, str], timeout: float, method: str) -> bytes:
         req = request.Request(url=url, data=body, headers=headers, method=method)
-        with request.urlopen(req, timeout=timeout) as response:
-            return response.read()
+        try:
+            with request.urlopen(req, timeout=timeout) as response:
+                return response.read()
+        except error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            raise FeishuApiError(
+                f"Feishu HTTP error {exc.code}: {error_body[:1200] or exc.reason}"
+            ) from exc
 
 
 class FeishuPersonalDevelopmentBitable:
@@ -331,9 +337,18 @@ class FeishuPersonalDevelopmentBitable:
         "本地记录ID": 1,
     }
 
-    def __init__(self, *, client: Any, base_url: str = "https://your-tenant.feishu.cn/base") -> None:
+    def __init__(
+        self,
+        *,
+        client: Any,
+        base_url: str = "https://your-tenant.feishu.cn/base",
+        max_append_attempts: int = 3,
+        retry_delay_seconds: float = 0.5,
+    ) -> None:
         self.client = client
         self.base_url = base_url.rstrip("/")
+        self.max_append_attempts = max(1, max_append_attempts)
+        self.retry_delay_seconds = max(0.0, retry_delay_seconds)
 
     def create_employee_table(self, employee_name: str) -> dict[str, str]:
         app_token = self.client.create_app(f"{employee_name} Coach Records")
@@ -347,6 +362,19 @@ class FeishuPersonalDevelopmentBitable:
         }
 
     def append_coaching_record(self, employee: dict[str, Any], session: dict[str, Any]) -> str:
+        last_error: Exception | None = None
+        for attempt in range(self.max_append_attempts):
+            try:
+                return self._append_coaching_record_once(employee, session)
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if attempt + 1 >= self.max_append_attempts:
+                    break
+                time.sleep(self.retry_delay_seconds * (attempt + 1))
+        assert last_error is not None
+        raise last_error
+
+    def _append_coaching_record_once(self, employee: dict[str, Any], session: dict[str, Any]) -> str:
         feishu = dict(employee.get("feishu") or {})
         app_token = str(feishu.get("app_token") or "")
         table_id = str(feishu.get("table_id") or "")
@@ -1181,18 +1209,7 @@ class PersonalDevelopmentService:
             "feishu_record_id": "",
         }
         session = self.store.create_session(session)
-        try:
-            record_id = self.feishu.append_coaching_record(employee, session) if self.feishu else ""
-            session = self.store.update_session(
-                session_id,
-                {"sync_status": "synced", "feishu_record_id": record_id, "sync_error": ""},
-            )
-        except Exception as exc:  # noqa: BLE001
-            session = self.store.update_session(
-                session_id,
-                {"sync_status": "failed", "sync_error": str(exc), "feishu_record_id": ""},
-            )
-        return session
+        return self._sync_session_to_feishu(employee, session)
 
     def create_coaching_session_from_transcript(
         self,
@@ -1250,21 +1267,38 @@ class PersonalDevelopmentService:
             "feishu_record_id": "",
         }
         session = self.store.create_session(session)
+        return self._sync_session_to_feishu(employee, session)
+
+    def retry_feishu_sync(self, *, employee_id: str, session_id: str) -> dict[str, Any]:
+        employee = self.store.get_employee(employee_id)
+        if employee is None:
+            raise KeyError(employee_id)
+        session = next(
+            (item for item in self.store.list_sessions(employee_id) if item.get("id") == session_id),
+            None,
+        )
+        if session is None:
+            raise KeyError(session_id)
+        if str(session.get("sync_status") or "") == "synced" and str(session.get("feishu_record_id") or ""):
+            return session
+        return self._sync_session_to_feishu(employee, session)
+
+    def list_sessions(self, employee_id: str) -> list[dict[str, Any]]:
+        return self.store.list_sessions(employee_id)
+
+    def _sync_session_to_feishu(self, employee: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+        session_id = str(session.get("id") or "")
         try:
             record_id = self.feishu.append_coaching_record(employee, session) if self.feishu else ""
-            session = self.store.update_session(
+            return self.store.update_session(
                 session_id,
                 {"sync_status": "synced", "feishu_record_id": record_id, "sync_error": ""},
             )
         except Exception as exc:  # noqa: BLE001
-            session = self.store.update_session(
+            return self.store.update_session(
                 session_id,
                 {"sync_status": "failed", "sync_error": str(exc), "feishu_record_id": ""},
             )
-        return session
-
-    def list_sessions(self, employee_id: str) -> list[dict[str, Any]]:
-        return self.store.list_sessions(employee_id)
 
     def _save_audio(self, employee_id: str, session_id: str, filename: str, audio_bytes: bytes) -> Path:
         extension = Path(filename or "coach.wav").suffix or ".bin"

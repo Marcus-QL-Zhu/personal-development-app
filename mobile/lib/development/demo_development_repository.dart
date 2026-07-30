@@ -81,6 +81,25 @@ class DemoDevelopmentRepository implements DevelopmentRepository {
   }
 
   @override
+  Future<DevelopmentCoachingSession> retryCoachingSessionSync({
+    required String employeeId,
+    required String sessionId,
+  }) async {
+    final index = _sessions.indexWhere(
+      (item) => item.employeeId == employeeId && item.id == sessionId,
+    );
+    if (index < 0) {
+      throw StateError('coaching session not found');
+    }
+    final updated = _sessions[index].copyWith(
+      syncStatus: 'synced',
+      syncError: '',
+    );
+    _sessions[index] = updated;
+    return updated;
+  }
+
+  @override
   Future<DevelopmentCoachingSession> uploadCoachingSession({
     required String employeeId,
     required UploadFilePayload clip,
@@ -105,8 +124,9 @@ class DemoDevelopmentRepository implements DevelopmentRepository {
 List<GallupStrength> _parseDemoGallup(String raw) {
   final strengths = <GallupStrength>[];
   for (final line in raw.split('\n')) {
-    final match =
-        RegExp(r'^\s*(\d{1,2})\s*[\.\)）:：、-]?\s*(.+?)\s*$').firstMatch(line);
+    final match = RegExp(
+      r'^\s*(\d{1,2})\s*[\.\)）:：、-]?\s*(.+?)\s*$',
+    ).firstMatch(line);
     if (match == null) continue;
     strengths.add(
       GallupStrength(

@@ -528,3 +528,75 @@ def test_minimax_m3_generator_sends_reasoning_payload_and_parses_json():
         "action_plan": "本次未形成明确 Action Plan。",
         "manager_feedback": "节奏评分：4。",
     }
+
+
+def test_feishu_appender_retries_create_record_failures():
+    from gamevoice_server.personal_development import FeishuApiError, FeishuPersonalDevelopmentBitable
+
+    attempts = []
+
+    class FlakyClient:
+        def create_record(self, app_token, table_id, fields):
+            attempts.append((app_token, table_id, fields))
+            if len(attempts) < 3:
+                raise FeishuApiError('Feishu HTTP error 400: {"msg":"temporary edge failure"}')
+            return 'rec-after-retry'
+
+    feishu = FeishuPersonalDevelopmentBitable(
+        client=FlakyClient(),
+        max_append_attempts=3,
+        retry_delay_seconds=0,
+    )
+    employee = {'feishu': {'app_token': 'base-token', 'table_id': 'table-id'}}
+    session = {
+        'id': 'session-1',
+        'coach_date': '2026-07-30',
+        'topic': 'Retry sync',
+        'content_summary': 'Summary',
+        'action_plan': '',
+        'quality_status': 'ok',
+    }
+
+    assert feishu.append_coaching_record(employee, session) == 'rec-after-retry'
+    assert len(attempts) == 3
+
+
+def test_retry_feishu_sync_updates_failed_session():
+    from gamevoice_server.personal_development import (
+        InMemoryPersonalDevelopmentStore,
+        PersonalDevelopmentService,
+    )
+
+    class FakeFeishu:
+        def create_employee_table(self, employee_name: str) -> dict:
+            return {'app_token': 'base-token', 'table_id': 'table-id', 'url': ''}
+
+        def append_coaching_record(self, employee: dict, session: dict) -> str:
+            return 'rec-retry'
+
+    store = InMemoryPersonalDevelopmentStore()
+    service = PersonalDevelopmentService(store=store, feishu=FakeFeishu(), asr=None, generator=None)
+    employee = service.create_employee(name='Crany', gallup_raw='', profile_note='')
+    session = store.create_session(
+        {
+            'id': 'session-failed',
+            'employee_id': employee['id'],
+            'coach_date': '2026-07-30',
+            'created_at': '2026-07-30T11:14:32+00:00',
+            'topic': 'Failed sync',
+            'content_summary': 'Summary',
+            'action_plan': '',
+            'manager_feedback': '',
+            'transcript_text': '',
+            'quality_status': 'ok',
+            'sync_status': 'failed',
+            'sync_error': 'Feishu HTTP error 400: bad request',
+            'feishu_record_id': '',
+        }
+    )
+
+    updated = service.retry_feishu_sync(employee_id=employee['id'], session_id=session['id'])
+
+    assert updated['sync_status'] == 'synced'
+    assert updated['sync_error'] == ''
+    assert updated['feishu_record_id'] == 'rec-retry'

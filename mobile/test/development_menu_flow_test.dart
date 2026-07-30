@@ -10,8 +10,9 @@ void main() {
   testWidgets('main menu exposes personal development actions', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
-        home:
-            DevelopmentMainMenuScreen(repository: _FakeDevelopmentRepository()),
+        home: DevelopmentMainMenuScreen(
+          repository: _FakeDevelopmentRepository(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -26,75 +27,84 @@ void main() {
   });
 
   testWidgets(
-      'creates consultant then opens editable profile with copyable Feishu link',
-      (tester) async {
-    final clipboardCalls = <MethodCall>[];
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      SystemChannels.platform,
-      (call) async {
-        clipboardCalls.add(call);
-        return null;
-      },
-    );
-    final repository = _FakeDevelopmentRepository();
-    await tester.pumpWidget(
-        MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)));
-    await tester.pumpAndSettle();
+    'creates consultant then opens editable profile with copyable Feishu link',
+    (tester) async {
+      final clipboardCalls = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          clipboardCalls.add(call);
+          return null;
+        },
+      );
+      final repository = _FakeDevelopmentRepository();
+      await tester.pumpWidget(
+        MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.text('新增顾问'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.widgetWithText(TextField, '名称'), 'Alice');
-    await tester.tap(find.text('确认保存'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('新增顾问'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, '名称'), 'Alice');
+      await tester.tap(find.text('确认保存'));
+      await tester.pumpAndSettle();
 
-    expect(repository.employees.single.name, 'Alice');
-    expect(repository.employees.single.profileNote, '');
-    expect(repository.employees.single.gallupRaw, '');
-    expect(find.widgetWithText(TextField, 'Alice'), findsOneWidget);
-    expect(find.text('https://feishu.example/base/employee-1'), findsOneWidget);
-    final copyButton = find.widgetWithIcon(IconButton, Icons.copy);
-    expect(copyButton, findsOneWidget);
+      expect(repository.employees.single.name, 'Alice');
+      expect(repository.employees.single.profileNote, '');
+      expect(repository.employees.single.gallupRaw, '');
+      expect(find.widgetWithText(TextField, 'Alice'), findsOneWidget);
+      expect(
+        find.text('https://feishu.example/base/employee-1'),
+        findsOneWidget,
+      );
+      final copyButton = find.widgetWithIcon(IconButton, Icons.copy);
+      expect(copyButton, findsOneWidget);
 
-    final button = tester.widget<IconButton>(copyButton);
-    expect(button.onPressed, isNotNull);
-    button.onPressed!();
-    await tester.pumpAndSettle();
-    expect(
-      clipboardCalls.any(
-        (call) =>
-            call.method == 'Clipboard.setData' &&
-            (call.arguments as Map)['text'] ==
-                'https://feishu.example/base/employee-1',
-      ),
-      isTrue,
-    );
+      final button = tester.widget<IconButton>(copyButton);
+      expect(button.onPressed, isNotNull);
+      button.onPressed!();
+      await tester.pumpAndSettle();
+      expect(
+        clipboardCalls.any(
+          (call) =>
+              call.method == 'Clipboard.setData' &&
+              (call.arguments as Map)['text'] ==
+                  'https://feishu.example/base/employee-1',
+        ),
+        isTrue,
+      );
 
-    await tester.pageBack();
-    await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.text('编辑履历'));
-    await tester.pumpAndSettle();
-    expect(find.text('Alice'), findsOneWidget);
-    await tester.pageBack();
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('编辑履历'));
+      await tester.pumpAndSettle();
+      expect(find.text('Alice'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.text('coach历史'));
-    await tester.pumpAndSettle();
-    expect(find.text('Alice'), findsOneWidget);
-  });
+      await tester.tap(find.text('coach历史'));
+      await tester.pumpAndSettle();
+      expect(find.text('Alice'), findsOneWidget);
+    },
+  );
 
-  testWidgets('edit profile saves changed consultant information',
-      (tester) async {
+  testWidgets('edit profile saves changed consultant information', (
+    tester,
+  ) async {
     final repository = _FakeDevelopmentRepository()
-      ..employees.add(const DevelopmentEmployee(
-        id: 'employee-1',
-        name: 'Alice',
-        gallupRaw: '',
-        profileNote: '',
-        gallupStrengths: [],
-      ));
+      ..employees.add(
+        const DevelopmentEmployee(
+          id: 'employee-1',
+          name: 'Alice',
+          gallupRaw: '',
+          profileNote: '',
+          gallupStrengths: [],
+        ),
+      );
     await tester.pumpWidget(
-        MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)));
+      MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('编辑履历'));
@@ -103,7 +113,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, '名称'), 'Alice Zhang');
     await tester.enterText(
-        find.widgetWithText(TextField, '介绍'), 'New profile note');
+      find.widgetWithText(TextField, '介绍'),
+      'New profile note',
+    );
     await tester.tap(find.text('确认保存'));
     await tester.pumpAndSettle();
 
@@ -112,79 +124,83 @@ void main() {
   });
 
   testWidgets(
-      'coach history is sorted newest first and upload is confirmed after recording',
-      (tester) async {
-    final repository = _FakeDevelopmentRepository();
-    final employee = const DevelopmentEmployee(
-      id: 'employee-1',
-      name: 'Alice',
-      gallupRaw: '',
-      profileNote: '',
-      gallupStrengths: [],
-    );
-    repository.employees.add(employee);
-    repository.sessions[employee.id] = [
-      const DevelopmentCoachingSession(
-        id: 'old',
-        employeeId: 'employee-1',
-        coachDate: '2026-06-01',
-        topic: '旧记录',
-        contentSummary: '旧总结',
-        actionPlan: '旧行动',
-        managerFeedback: '旧 notes',
-        transcriptText: '旧转写',
-        qualityStatus: 'ok',
-        syncStatus: 'synced',
-      ),
-      const DevelopmentCoachingSession(
-        id: 'new',
-        employeeId: 'employee-1',
-        coachDate: '2026-06-07',
-        topic: '新记录',
-        contentSummary: '新总结',
-        actionPlan: '新行动',
-        managerFeedback: '新 notes',
-        transcriptText: '新转写',
-        qualityStatus: 'ok',
-        syncStatus: 'synced',
-      ),
-    ];
-    final recorder = _FakeVoiceRecorder();
+    'coach history is sorted newest first and upload is confirmed after recording',
+    (tester) async {
+      final repository = _FakeDevelopmentRepository();
+      final employee = const DevelopmentEmployee(
+        id: 'employee-1',
+        name: 'Alice',
+        gallupRaw: '',
+        profileNote: '',
+        gallupStrengths: [],
+      );
+      repository.employees.add(employee);
+      repository.sessions[employee.id] = [
+        const DevelopmentCoachingSession(
+          id: 'old',
+          employeeId: 'employee-1',
+          coachDate: '2026-06-01',
+          topic: '旧记录',
+          contentSummary: '旧总结',
+          actionPlan: '旧行动',
+          managerFeedback: '旧 notes',
+          transcriptText: '旧转写',
+          qualityStatus: 'ok',
+          syncStatus: 'synced',
+        ),
+        const DevelopmentCoachingSession(
+          id: 'new',
+          employeeId: 'employee-1',
+          coachDate: '2026-06-07',
+          topic: '新记录',
+          contentSummary: '新总结',
+          actionPlan: '新行动',
+          managerFeedback: '新 notes',
+          transcriptText: '新转写',
+          qualityStatus: 'ok',
+          syncStatus: 'synced',
+        ),
+      ];
+      final recorder = _FakeVoiceRecorder();
 
-    await tester.pumpWidget(MaterialApp(
-      home: DevelopmentMainMenuScreen(
-        repository: repository,
-        voiceRecorderFactory: () => recorder,
-      ),
-    ));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DevelopmentMainMenuScreen(
+            repository: repository,
+            voiceRecorderFactory: () => recorder,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.text('coach历史'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Alice'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('coach历史'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Alice'));
+      await tester.pumpAndSettle();
 
-    final newTop = tester.getTopLeft(find.textContaining('新记录')).dy;
-    final oldTop = tester.getTopLeft(find.textContaining('旧记录')).dy;
-    expect(newTop, lessThan(oldTop));
-    expect(find.byType(Scrollable), findsWidgets);
+      final newTop = tester.getTopLeft(find.textContaining('新记录')).dy;
+      final oldTop = tester.getTopLeft(find.textContaining('旧记录')).dy;
+      expect(newTop, lessThan(oldTop));
+      expect(find.byType(Scrollable), findsWidgets);
 
-    await tester.tap(find.text('开始录音'));
-    await tester.pump();
-    expect(find.text('正在录音'), findsOneWidget);
-    expect(find.text('结束录音'), findsOneWidget);
+      await tester.tap(find.text('开始录音'));
+      await tester.pump();
+      expect(find.text('正在录音'), findsOneWidget);
+      expect(find.text('结束录音'), findsOneWidget);
 
-    await tester.tap(find.text('结束录音'));
-    await tester.pumpAndSettle();
-    expect(find.text('上传这段录音?'), findsOneWidget);
+      await tester.tap(find.text('结束录音'));
+      await tester.pumpAndSettle();
+      expect(find.text('上传这段录音?'), findsOneWidget);
 
-    await tester.tap(find.text('上传'));
-    await tester.pumpAndSettle();
-    expect(repository.uploadedClips.single.filename, 'coach.wav');
-  });
+      await tester.tap(find.text('上传'));
+      await tester.pumpAndSettle();
+      expect(repository.uploadedClips.single.filename, 'coach.wav');
+    },
+  );
 
-  testWidgets('failed upload keeps clip and allows manual retry',
-      (tester) async {
+  testWidgets('failed upload keeps clip and allows manual retry', (
+    tester,
+  ) async {
     final repository = _FakeDevelopmentRepository()..failNextUpload = true;
     final employee = const DevelopmentEmployee(
       id: 'employee-1',
@@ -196,12 +212,14 @@ void main() {
     repository.employees.add(employee);
     final recorder = _FakeVoiceRecorder();
 
-    await tester.pumpWidget(MaterialApp(
-      home: DevelopmentMainMenuScreen(
-        repository: repository,
-        voiceRecorderFactory: () => recorder,
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DevelopmentMainMenuScreen(
+          repository: repository,
+          voiceRecorderFactory: () => recorder,
+        ),
       ),
-    ));
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('coach历史'));
@@ -226,54 +244,56 @@ void main() {
   });
 
   testWidgets(
-      'coach detail shows summary action plan manager notes and collapsed transcript',
-      (tester) async {
-    final repository = _FakeDevelopmentRepository();
-    final employee = const DevelopmentEmployee(
-      id: 'employee-1',
-      name: 'Alice',
-      gallupRaw: '',
-      profileNote: '',
-      gallupStrengths: [],
-    );
-    repository.employees.add(employee);
-    repository.sessions[employee.id] = [
-      const DevelopmentCoachingSession(
-        id: 'session-1',
-        employeeId: 'employee-1',
-        coachDate: '2026-06-07',
-        topic: '客户需求澄清',
-        contentSummary: '知识点：先复述客户目标。',
-        actionPlan: '下次先写三句复述。',
-        managerFeedback: '讲得清楚，但可以增加员工复述练习。',
-        transcriptText: '完整转写内容',
-        qualityStatus: 'ok',
-        syncStatus: 'synced',
-      ),
-    ];
+    'coach detail shows summary action plan manager notes and collapsed transcript',
+    (tester) async {
+      final repository = _FakeDevelopmentRepository();
+      final employee = const DevelopmentEmployee(
+        id: 'employee-1',
+        name: 'Alice',
+        gallupRaw: '',
+        profileNote: '',
+        gallupStrengths: [],
+      );
+      repository.employees.add(employee);
+      repository.sessions[employee.id] = [
+        const DevelopmentCoachingSession(
+          id: 'session-1',
+          employeeId: 'employee-1',
+          coachDate: '2026-06-07',
+          topic: '客户需求澄清',
+          contentSummary: '知识点：先复述客户目标。',
+          actionPlan: '下次先写三句复述。',
+          managerFeedback: '讲得清楚，但可以增加员工复述练习。',
+          transcriptText: '完整转写内容',
+          qualityStatus: 'ok',
+          syncStatus: 'synced',
+        ),
+      ];
 
-    await tester.pumpWidget(
-        MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('coach历史'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Alice'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.textContaining('客户需求澄清'));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        MaterialApp(home: DevelopmentMainMenuScreen(repository: repository)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('coach历史'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('客户需求澄清'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('内容总结'), findsOneWidget);
-    expect(find.text('知识点：先复述客户目标。'), findsOneWidget);
-    expect(find.text('Action Plan'), findsOneWidget);
-    expect(find.text('下次先写三句复述。'), findsOneWidget);
-    expect(find.text('Manager Notes'), findsOneWidget);
-    expect(find.text('讲得清楚，但可以增加员工复述练习。'), findsOneWidget);
-    expect(find.text('完整转写内容'), findsNothing);
+      expect(find.text('内容总结'), findsOneWidget);
+      expect(find.text('知识点：先复述客户目标。'), findsOneWidget);
+      expect(find.text('Action Plan'), findsOneWidget);
+      expect(find.text('下次先写三句复述。'), findsOneWidget);
+      expect(find.text('Manager Notes'), findsOneWidget);
+      expect(find.text('讲得清楚，但可以增加员工复述练习。'), findsOneWidget);
+      expect(find.text('完整转写内容'), findsNothing);
 
-    await tester.tap(find.text('查看完整转写'));
-    await tester.pumpAndSettle();
-    expect(find.text('完整转写内容'), findsOneWidget);
-  });
+      await tester.tap(find.text('查看完整转写'));
+      await tester.pumpAndSettle();
+      expect(find.text('完整转写内容'), findsOneWidget);
+    },
+  );
 }
 
 class _FakeVoiceRecorder implements VoiceRecorder {
@@ -361,6 +381,24 @@ class _FakeDevelopmentRepository implements DevelopmentRepository {
     required String employeeId,
   }) async {
     return List.unmodifiable(sessions[employeeId] ?? const []);
+  }
+
+  @override
+  Future<DevelopmentCoachingSession> retryCoachingSessionSync({
+    required String employeeId,
+    required String sessionId,
+  }) async {
+    final employeeSessions = sessions[employeeId] ?? const [];
+    final index = employeeSessions.indexWhere((item) => item.id == sessionId);
+    if (index < 0) {
+      throw StateError('coaching session not found');
+    }
+    final updated = employeeSessions[index].copyWith(
+      syncStatus: 'synced',
+      syncError: '',
+    );
+    sessions[employeeId]![index] = updated;
+    return updated;
   }
 
   @override

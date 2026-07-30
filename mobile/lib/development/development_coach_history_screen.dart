@@ -123,7 +123,7 @@ class _DevelopmentCoachHistoryScreenState
       );
       final next = [
         session,
-        ..._sessions.where((item) => item.id != session.id)
+        ..._sessions.where((item) => item.id != session.id),
       ];
       next.sort((a, b) => _sortKey(b).compareTo(_sortKey(a)));
       if (mounted) {
@@ -183,10 +183,7 @@ class _DevelopmentCoachHistoryScreenState
               ),
             if (_processing) const LinearProgressIndicator(),
             if (_processing)
-              const Padding(
-                padding: EdgeInsets.all(8),
-                child: Text('处理中，请稍候'),
-              ),
+              const Padding(padding: EdgeInsets.all(8), child: Text('处理中，请稍候')),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.all(12),
@@ -195,14 +192,16 @@ class _DevelopmentCoachHistoryScreenState
                   children: [
                     Text(
                       _error!,
-                      style:
-                          TextStyle(color: Theme.of(context).colorScheme.error),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                     if (_failedClip != null) ...[
                       const SizedBox(height: 8),
                       OutlinedButton.icon(
-                        onPressed:
-                            _processing ? null : () => _upload(_failedClip!),
+                        onPressed: _processing
+                            ? null
+                            : () => _upload(_failedClip!),
                         icon: const Icon(Icons.refresh),
                         label: const Text('重试上传'),
                       ),
@@ -214,39 +213,41 @@ class _DevelopmentCoachHistoryScreenState
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _sessions.isEmpty
-                      ? const Center(child: Text('暂无 coach 记录'))
-                      : ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-                          itemCount: _sessions.length,
-                          itemBuilder: (context, index) {
-                            final session = _sessions[index];
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: ListTile(
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  side: BorderSide(
-                                    color: Theme.of(context).dividerColor,
-                                  ),
-                                ),
-                                title: Text(
-                                    '${session.coachDate} · ${session.topic}'),
-                                subtitle: Text(
-                                  '${session.syncStatus} · ${session.qualityStatus}',
-                                ),
-                                trailing: const Icon(Icons.chevron_right),
-                                onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        DevelopmentCoachDetailScreen(
-                                            session: session),
-                                  ),
+                  ? const Center(child: Text('暂无 coach 记录'))
+                  : ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+                      itemCount: _sessions.length,
+                      itemBuilder: (context, index) {
+                        final session = _sessions[index];
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: ListTile(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: BorderSide(
+                                color: Theme.of(context).dividerColor,
+                              ),
+                            ),
+                            title: Text(
+                              '${session.coachDate} · ${session.topic}',
+                            ),
+                            subtitle: Text(
+                              '${session.syncStatus} · ${session.qualityStatus}',
+                            ),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => DevelopmentCoachDetailScreen(
+                                  session: session,
+                                  repository: widget.repository,
                                 ),
                               ),
-                            );
-                          },
-                        ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -256,8 +257,8 @@ class _DevelopmentCoachHistoryScreenState
                   onPressed: _processing
                       ? null
                       : _recording
-                          ? _stopRecording
-                          : _startRecording,
+                      ? _stopRecording
+                      : _startRecording,
                   icon: Icon(_recording ? Icons.stop : Icons.mic),
                   label: Text(_recording ? '结束录音' : '开始录音'),
                 ),

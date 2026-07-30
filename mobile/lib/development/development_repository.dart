@@ -77,6 +77,7 @@ class DevelopmentCoachingSession {
     required this.transcriptText,
     required this.qualityStatus,
     required this.syncStatus,
+    this.syncError = '',
   });
 
   factory DevelopmentCoachingSession.fromJson(Map<String, dynamic> json) {
@@ -91,6 +92,7 @@ class DevelopmentCoachingSession {
       transcriptText: json['transcript_text'] as String? ?? '',
       qualityStatus: json['quality_status'] as String? ?? '',
       syncStatus: json['sync_status'] as String? ?? '',
+      syncError: json['sync_error'] as String? ?? '',
     );
   }
 
@@ -104,6 +106,23 @@ class DevelopmentCoachingSession {
   final String transcriptText;
   final String qualityStatus;
   final String syncStatus;
+  final String syncError;
+
+  DevelopmentCoachingSession copyWith({String? syncStatus, String? syncError}) {
+    return DevelopmentCoachingSession(
+      id: id,
+      employeeId: employeeId,
+      coachDate: coachDate,
+      topic: topic,
+      contentSummary: contentSummary,
+      actionPlan: actionPlan,
+      managerFeedback: managerFeedback,
+      transcriptText: transcriptText,
+      qualityStatus: qualityStatus,
+      syncStatus: syncStatus ?? this.syncStatus,
+      syncError: syncError ?? this.syncError,
+    );
+  }
 }
 
 abstract class DevelopmentRepository {
@@ -131,5 +150,10 @@ abstract class DevelopmentRepository {
   Future<DevelopmentCoachingSession> uploadCoachingSession({
     required String employeeId,
     required UploadFilePayload clip,
+  });
+
+  Future<DevelopmentCoachingSession> retryCoachingSessionSync({
+    required String employeeId,
+    required String sessionId,
   });
 }

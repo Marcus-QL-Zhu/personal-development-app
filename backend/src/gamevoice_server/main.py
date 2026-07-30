@@ -3648,6 +3648,17 @@ def list_development_coaching_sessions(employee_id: str) -> dict:
     return {"sessions": personal_development_service.list_sessions(employee_id)}
 
 
+@app.post("/development/employees/{employee_id}/coaching-sessions/{session_id}/retry-sync")
+def retry_development_coaching_session_sync(employee_id: str, session_id: str) -> dict:
+    try:
+        return personal_development_service.retry_feishu_sync(
+            employee_id=employee_id,
+            session_id=session_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="coaching session not found") from exc
+
+
 @app.post("/tables")
 def create_table(payload: TableCreateRequest) -> dict:
     table = session_manager.start_table(

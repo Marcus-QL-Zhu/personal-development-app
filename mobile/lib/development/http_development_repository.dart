@@ -9,8 +9,8 @@ class HttpDevelopmentRepository implements DevelopmentRepository {
     required this.baseUri,
     String? apiToken,
     HttpClient? httpClient,
-  })  : _apiToken = apiToken?.trim() ?? '',
-        _httpClient = httpClient ?? HttpClient();
+  }) : _apiToken = apiToken?.trim() ?? '',
+       _httpClient = httpClient ?? HttpClient();
 
   final Uri baseUri;
   final String _apiToken;
@@ -94,7 +94,9 @@ class HttpDevelopmentRepository implements DevelopmentRepository {
   }) async {
     if (clip.localPath.isNotEmpty) {
       return _uploadLocalRecordingViaFlashAsr(
-          employeeId: employeeId, clip: clip);
+        employeeId: employeeId,
+        clip: clip,
+      );
     }
     final boundary = 'coach-audio-${DateTime.now().microsecondsSinceEpoch}';
     final request = await _openRequest(
@@ -107,10 +109,9 @@ class HttpDevelopmentRepository implements DevelopmentRepository {
     );
 
     request.write('--$boundary\r\n');
-    request.write(_multipartContentDisposition(
-      fieldName: 'clip',
-      filename: clip.filename,
-    ));
+    request.write(
+      _multipartContentDisposition(fieldName: 'clip', filename: clip.filename),
+    );
     request.write('Content-Type: application/octet-stream\r\n\r\n');
     request.add(clip.bytes);
     request.write('\r\n');
@@ -120,12 +121,27 @@ class HttpDevelopmentRepository implements DevelopmentRepository {
     return DevelopmentCoachingSession.fromJson(response);
   }
 
+  @override
+  Future<DevelopmentCoachingSession> retryCoachingSessionSync({
+    required String employeeId,
+    required String sessionId,
+  }) async {
+    final response = await _sendJson(
+      method: 'POST',
+      path:
+          '/development/employees/$employeeId/coaching-sessions/$sessionId/retry-sync',
+      payload: const {},
+    );
+    return DevelopmentCoachingSession.fromJson(response);
+  }
+
   Future<DevelopmentCoachingSession> _uploadLocalRecordingViaFlashAsr({
     required String employeeId,
     required UploadFilePayload clip,
   }) async {
-    final chunkPaths =
-        clip.chunkPaths.isNotEmpty ? clip.chunkPaths : [clip.localPath];
+    final chunkPaths = clip.chunkPaths.isNotEmpty
+        ? clip.chunkPaths
+        : [clip.localPath];
     final transcripts = <Map<String, dynamic>>[];
     for (final chunkPath in chunkPaths) {
       final file = File(chunkPath);
@@ -140,7 +156,8 @@ class HttpDevelopmentRepository implements DevelopmentRepository {
         () => _createFlashAsrSignature(filename: filename, contentLength: size),
       );
       transcripts.add(
-          await _withRetries(() => _postToTencentFlashAsr(file, signature)));
+        await _withRetries(() => _postToTencentFlashAsr(file, signature)),
+      );
     }
 
     final merged = _mergeTencentTranscripts(transcripts);
@@ -164,10 +181,7 @@ class HttpDevelopmentRepository implements DevelopmentRepository {
     return _sendJson(
       method: 'POST',
       path: '/development/asr/flash-signatures',
-      payload: {
-        'filename': filename,
-        'content_length': contentLength,
-      },
+      payload: {'filename': filename, 'content_length': contentLength},
     );
   }
 
@@ -211,7 +225,8 @@ class HttpDevelopmentRepository implements DevelopmentRepository {
   }
 
   Map<String, dynamic> _mergeTencentTranscripts(
-      List<Map<String, dynamic>> payloads) {
+    List<Map<String, dynamic>> payloads,
+  ) {
     final texts = <String>[];
     final segments = <Map<String, dynamic>>[];
     for (final payload in payloads) {
@@ -242,8 +257,9 @@ class HttpDevelopmentRepository implements DevelopmentRepository {
     return {
       'text': texts.join(),
       'segments': segments,
-      'quality_status':
-          texts.isEmpty && segments.isEmpty ? 'quality_pending' : 'ok',
+      'quality_status': texts.isEmpty && segments.isEmpty
+          ? 'quality_pending'
+          : 'ok',
     };
   }
 
@@ -256,7 +272,8 @@ class HttpDevelopmentRepository implements DevelopmentRepository {
         lastError = e;
         if (attempt < 2) {
           await Future<void>.delayed(
-              Duration(milliseconds: 250 * (attempt + 1)));
+            Duration(milliseconds: 250 * (attempt + 1)),
+          );
         }
       }
     }
@@ -278,8 +295,10 @@ class HttpDevelopmentRepository implements DevelopmentRepository {
     final uri = baseUri.replace(path: path);
     return _httpClient.openUrl(method, uri).then((request) {
       if (_apiToken.isNotEmpty) {
-        request.headers
-            .set(HttpHeaders.authorizationHeader, 'Bearer $_apiToken');
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Bearer $_apiToken',
+        );
       }
       return request;
     });
